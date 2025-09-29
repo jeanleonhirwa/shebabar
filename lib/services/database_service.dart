@@ -3,6 +3,7 @@ import 'package:mysql1/mysql1.dart' as mysql;
 import 'package:connectivity_plus/connectivity_plus.dart';
 import '../config/database_config.dart';
 import '../config/app_config.dart';
+import '../utils/constants.dart';
 import '../models/user.dart';
 import '../models/product.dart';
 import '../models/stock_movement.dart';

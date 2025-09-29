@@ -1,3 +1,4 @@
+import 'dart:async';
 import 'package:flutter/material.dart';
 import 'package:intl/intl.dart';
 import 'constants.dart';
@@ -264,6 +265,3 @@ class Helpers {
     _debounceTimer = Timer(delay, callback);
   }
 }
-
-// Extension to add Timer import
-import 'dart:async';

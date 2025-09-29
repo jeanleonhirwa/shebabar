@@ -115,7 +115,7 @@ class Validators {
       return 'Amazina ntayirenze ibyangombwa 50';
     }
     // Allow letters, spaces, and common punctuation
-    if (!RegExp(r'^[a-zA-Z\s\.\-\']+$').hasMatch(value.trim())) {
+    if (!RegExp(r'^[a-zA-Z\s\.\-]+$').hasMatch(value.trim())) {
       return 'Amazina akoresha ibyangombwa bitemewe gusa';
     }
     return null;

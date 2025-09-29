@@ -111,7 +111,7 @@ class ThemeConfig {
       ),
       
       // Card Theme
-      cardTheme: CardTheme(
+      cardTheme: CardThemeData(
         color: cardBackground,
         elevation: 4,
         shape: RoundedRectangleBorder(
@@ -172,7 +172,7 @@ class ThemeConfig {
       ),
       
       // Dialog Theme
-      dialogTheme: DialogTheme(
+      dialogTheme: DialogThemeData(
         shape: RoundedRectangleBorder(
           borderRadius: BorderRadius.circular(16),
         ),

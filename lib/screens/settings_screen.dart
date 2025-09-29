@@ -3,6 +3,7 @@ import 'package:provider/provider.dart';
 import '../config/theme_config.dart';
 import '../utils/constants.dart';
 import '../utils/helpers.dart';
+import '../models/user.dart';
 import '../providers/auth_provider.dart';
 import '../widgets/custom_card.dart';
 

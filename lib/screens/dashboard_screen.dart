@@ -4,6 +4,7 @@ import '../config/theme_config.dart';
 import '../config/app_config.dart';
 import '../utils/constants.dart';
 import '../utils/helpers.dart';
+import '../models/stock_movement.dart';
 import '../providers/auth_provider.dart';
 import '../providers/stock_provider.dart';
 import '../providers/product_provider.dart';

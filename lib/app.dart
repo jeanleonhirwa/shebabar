@@ -3,8 +3,10 @@ import 'package:provider/provider.dart';
 import 'config/theme_config.dart';
 import 'utils/constants.dart';
 import 'providers/auth_provider.dart';
+import 'providers/sync_provider.dart';
 import 'screens/login_screen.dart';
 import 'screens/dashboard_screen.dart';
+import 'widgets/loading_screen.dart';
 
 class App extends StatefulWidget {
   const App({super.key});

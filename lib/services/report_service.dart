@@ -1,10 +1,9 @@
+import 'dart:typed_data';
 import 'package:pdf/pdf.dart';
 import 'package:pdf/widgets.dart' as pw;
 import 'package:printing/printing.dart';
-import 'package:intl/intl.dart';
 import '../models/product.dart';
 import '../models/stock_movement.dart';
-import '../models/daily_summary.dart';
 import '../utils/constants.dart';
 import '../utils/helpers.dart';
 import 'database_service.dart';
@@ -161,14 +160,14 @@ class ReportService {
   }
 
   // Print report
-  Future<void> printReport(List<int> pdfBytes) async {
+  Future<void> printReport(Uint8List pdfBytes) async {
     await Printing.layoutPdf(
       onLayout: (PdfPageFormat format) async => pdfBytes,
     );
   }
 
   // Share report
-  Future<void> shareReport(List<int> pdfBytes, String filename) async {
+  Future<void> shareReport(Uint8List pdfBytes, String filename) async {
     await Printing.sharePdf(
       bytes: pdfBytes,
       filename: filename,
@@ -501,7 +500,7 @@ class ReportService {
               child: pw.Text(AppConstants.formatCurrency(item.soldValue)),
             ),
           ],
-        )).toList(),
+        )),
       ],
     );
   }

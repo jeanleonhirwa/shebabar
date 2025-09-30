@@ -6,7 +6,8 @@ import 'providers/stock_provider.dart';
 import 'providers/product_provider.dart';
 import 'providers/sync_provider.dart';
 
-void main() {
+void main() async {
+  WidgetsFlutterBinding.ensureInitialized();
   runApp(const ShebaBarApp());
 }
 

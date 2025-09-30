@@ -127,13 +127,20 @@ class SyncProvider extends ChangeNotifier {
       final pendingData = await _databaseService.getPendingSyncData();
       final status = await _databaseService.getSyncStatus();
       
+      // Count pending items by table
+      final pendingCounts = <String, int>{};
+      for (final item in pendingData) {
+        final tableName = item['table_name'] as String;
+        pendingCounts[tableName] = (pendingCounts[tableName] ?? 0) + 1;
+      }
+      
       return {
         'status': status,
         'pendingData': {
-          'users': pendingData['users']?.length ?? 0,
-          'products': pendingData['products']?.length ?? 0,
-          'movements': pendingData['stock_movements']?.length ?? 0,
-          'summaries': pendingData['daily_summaries']?.length ?? 0,
+          'users': pendingCounts['users'] ?? 0,
+          'products': pendingCounts['products'] ?? 0,
+          'movements': pendingCounts['stock_movements'] ?? 0,
+          'summaries': pendingCounts['daily_summaries'] ?? 0,
         },
       };
     } catch (e) {

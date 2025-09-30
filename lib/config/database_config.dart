@@ -133,10 +133,10 @@ class DatabaseConfig {
           await db.execute(statement);
         }
         
-        // Insert default admin user
+        // Insert default admin user (username: admin, password: admin123)
         await db.execute('''
           INSERT INTO users (username, password_hash, full_name, role, sync_status) 
-          VALUES ('mama', '\$2b\$12\$LQv3c1yqBWVHxkd0LHAkCOYz6TtxMQJqhN8/LewY5ORmCvKlFZBfi', 'Mama (Owner)', 'owner', 1)
+          VALUES ('admin', '240be518fabd2724ddb6f04eeb1da5967448d7e831c08c8fa822809f74c720a9', 'Administrator', 'owner', 1)
         ''');
       },
     );

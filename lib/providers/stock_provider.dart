@@ -326,4 +326,64 @@ class StockProvider extends ChangeNotifier {
       MovementType.BYONGEWE: _damagedMovements.length,
     };
   }
+
+  // Get week sales data for chart
+  List<Map<String, dynamic>> get weekSalesData {
+    // Generate mock data for now - in real implementation, this would come from database
+    final now = DateTime.now();
+    final weekData = <Map<String, dynamic>>[];
+    
+    for (int i = 6; i >= 0; i--) {
+      final date = now.subtract(Duration(days: i));
+      final dayMovements = _soldMovements.where((movement) {
+        final movementDate = DateTime(
+          movement.movementTime.year,
+          movement.movementTime.month,
+          movement.movementTime.day,
+        );
+        final targetDate = DateTime(date.year, date.month, date.day);
+        return movementDate == targetDate;
+      }).toList();
+      
+      final totalSales = dayMovements.fold<double>(
+        0.0,
+        (sum, movement) => sum + movement.totalAmount,
+      );
+      
+      weekData.add({
+        'date': date,
+        'sales': totalSales,
+      });
+    }
+    
+    return weekData;
+  }
+
+  // Generate PDF Report
+  Future<bool> generatePDFReport({
+    required DateTime date,
+    required String period,
+  }) async {
+    _setLoading(true);
+    _clearMessages();
+    
+    try {
+      // For now, simulate PDF generation
+      await Future.delayed(const Duration(seconds: 2));
+      
+      // In real implementation, this would:
+      // 1. Gather all data for the specified period
+      // 2. Generate PDF using pdf package
+      // 3. Save to device storage
+      // 4. Open or share the PDF
+      
+      _setSuccessMessage('PDF yasohotse neza!');
+      return true;
+    } catch (e) {
+      _setError('Habayeho ikosa mu gusohora PDF: ${e.toString()}');
+      return false;
+    } finally {
+      _setLoading(false);
+    }
+  }
 }

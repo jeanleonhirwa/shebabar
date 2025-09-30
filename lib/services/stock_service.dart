@@ -220,6 +220,9 @@ class StockService {
       todaySalesCount: stats['todaySalesCount'] as int,
       todaySalesAmount: (stats['todaySalesAmount'] as num).toDouble(),
       todayDamagedCount: stats['todayDamagedCount'] as int,
+      todayIncomingCount: stats['todayIncomingCount'] as int? ?? 0,
+      todayDamageAmount: (stats['todayDamageAmount'] as num?)?.toDouble() ?? 0.0,
+      todayProfit: (stats['todayProfit'] as num?)?.toDouble() ?? 0.0,
       lowStockProducts: stats['lowStockProducts'] as List<Product>,
     );
   }
@@ -432,6 +435,9 @@ class DashboardStats {
   final int todaySalesCount;
   final double todaySalesAmount;
   final int todayDamagedCount;
+  final int todayIncomingCount;
+  final double todayDamageAmount;
+  final double todayProfit;
   final List<Product> lowStockProducts;
 
   DashboardStats({
@@ -440,6 +446,9 @@ class DashboardStats {
     required this.todaySalesCount,
     required this.todaySalesAmount,
     required this.todayDamagedCount,
+    required this.todayIncomingCount,
+    required this.todayDamageAmount,
+    required this.todayProfit,
     required this.lowStockProducts,
   });
 }

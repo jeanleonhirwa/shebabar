@@ -462,4 +462,393 @@ class DatabaseService {
       }
     });
   }
+
+  // OFFLINE SYNC FUNCTIONALITY
+
+  // Check if device is online
+  Future<bool> isOnline() async {
+    try {
+      final connectivityResult = await Connectivity().checkConnectivity();
+      return connectivityResult != ConnectivityResult.none;
+    } catch (e) {
+      return false;
+    }
+  }
+
+  // Get all pending sync items (items with sync_status = 0)
+  Future<Map<String, List<Map<String, dynamic>>>> getPendingSyncData() async {
+    final db = await localDatabase;
+    
+    final pendingUsers = await db.query(
+      'users',
+      where: 'sync_status = ?',
+      whereArgs: [0],
+    );
+    
+    final pendingProducts = await db.query(
+      'products',
+      where: 'sync_status = ?',
+      whereArgs: [0],
+    );
+    
+    final pendingMovements = await db.query(
+      'stock_movements',
+      where: 'sync_status = ?',
+      whereArgs: [0],
+    );
+    
+    final pendingSummaries = await db.query(
+      'daily_summaries',
+      where: 'sync_status = ?',
+      whereArgs: [0],
+    );
+
+    return {
+      'users': pendingUsers,
+      'products': pendingProducts,
+      'stock_movements': pendingMovements,
+      'daily_summaries': pendingSummaries,
+    };
+  }
+
+  // Sync pending data to remote server
+  Future<bool> syncToRemote() async {
+    try {
+      if (!await isOnline()) {
+        return false;
+      }
+
+      final pendingData = await getPendingSyncData();
+      final remote = await remoteConnection;
+      
+      if (remote == null) {
+        return false;
+      }
+
+      // Sync users
+      for (final user in pendingData['users']!) {
+        await remote.query('''
+          INSERT INTO users (username, password_hash, full_name, role, is_active, created_at, updated_at)
+          VALUES (?, ?, ?, ?, ?, ?, ?)
+          ON DUPLICATE KEY UPDATE
+          password_hash = VALUES(password_hash),
+          full_name = VALUES(full_name),
+          role = VALUES(role),
+          is_active = VALUES(is_active),
+          updated_at = VALUES(updated_at)
+        ''', [
+          user['username'],
+          user['password_hash'],
+          user['full_name'],
+          user['role'],
+          user['is_active'],
+          user['created_at'],
+          user['updated_at'],
+        ]);
+      }
+
+      // Sync products
+      for (final product in pendingData['products']!) {
+        await remote.query('''
+          INSERT INTO products (product_name, category, unit_price, current_stock, min_stock_level, is_active, created_at, updated_at)
+          VALUES (?, ?, ?, ?, ?, ?, ?, ?)
+          ON DUPLICATE KEY UPDATE
+          product_name = VALUES(product_name),
+          category = VALUES(category),
+          unit_price = VALUES(unit_price),
+          current_stock = VALUES(current_stock),
+          min_stock_level = VALUES(min_stock_level),
+          is_active = VALUES(is_active),
+          updated_at = VALUES(updated_at)
+        ''', [
+          product['product_name'],
+          product['category'],
+          product['unit_price'],
+          product['current_stock'],
+          product['min_stock_level'],
+          product['is_active'],
+          product['created_at'],
+          product['updated_at'],
+        ]);
+      }
+
+      // Sync stock movements
+      for (final movement in pendingData['stock_movements']!) {
+        await remote.query('''
+          INSERT INTO stock_movements (product_id, movement_type, quantity, unit_price, total_amount, notes, movement_time, created_by)
+          VALUES (?, ?, ?, ?, ?, ?, ?, ?)
+        ''', [
+          movement['product_id'],
+          movement['movement_type'],
+          movement['quantity'],
+          movement['unit_price'],
+          movement['total_amount'],
+          movement['notes'],
+          movement['movement_time'],
+          movement['created_by'],
+        ]);
+      }
+
+      // Sync daily summaries
+      for (final summary in pendingData['daily_summaries']!) {
+        await remote.query('''
+          INSERT INTO daily_summaries (summary_date, total_sales, total_quantity_sold, total_incoming, total_damaged, created_at, updated_at)
+          VALUES (?, ?, ?, ?, ?, ?, ?)
+          ON DUPLICATE KEY UPDATE
+          total_sales = VALUES(total_sales),
+          total_quantity_sold = VALUES(total_quantity_sold),
+          total_incoming = VALUES(total_incoming),
+          total_damaged = VALUES(total_damaged),
+          updated_at = VALUES(updated_at)
+        ''', [
+          summary['summary_date'],
+          summary['total_sales'],
+          summary['total_quantity_sold'],
+          summary['total_incoming'],
+          summary['total_damaged'],
+          summary['created_at'],
+          summary['updated_at'],
+        ]);
+      }
+
+      // Mark all synced items as synced (sync_status = 1)
+      await _markAsSynced();
+      
+      return true;
+    } catch (e) {
+      print('Sync to remote failed: $e');
+      return false;
+    }
+  }
+
+  // Sync data from remote server to local
+  Future<bool> syncFromRemote() async {
+    try {
+      if (!await isOnline()) {
+        return false;
+      }
+
+      final remote = await remoteConnection;
+      if (remote == null) {
+        return false;
+      }
+
+      final db = await localDatabase;
+
+      // Get last sync timestamp
+      final lastSync = await _getLastSyncTimestamp();
+
+      // Sync users
+      final remoteUsers = await remote.query('''
+        SELECT * FROM users WHERE updated_at > ?
+      ''', [lastSync]);
+
+      for (final user in remoteUsers) {
+        await db.insert(
+          'users',
+          {
+            'username': user['username'],
+            'password_hash': user['password_hash'],
+            'full_name': user['full_name'],
+            'role': user['role'],
+            'is_active': user['is_active'] ? 1 : 0,
+            'created_at': user['created_at'].toString(),
+            'updated_at': user['updated_at'].toString(),
+            'sync_status': 1,
+          },
+          conflictAlgorithm: ConflictAlgorithm.replace,
+        );
+      }
+
+      // Sync products
+      final remoteProducts = await remote.query('''
+        SELECT * FROM products WHERE updated_at > ?
+      ''', [lastSync]);
+
+      for (final product in remoteProducts) {
+        await db.insert(
+          'products',
+          {
+            'product_id': product['product_id'],
+            'product_name': product['product_name'],
+            'category': product['category'],
+            'unit_price': product['unit_price'],
+            'current_stock': product['current_stock'],
+            'min_stock_level': product['min_stock_level'],
+            'is_active': product['is_active'] ? 1 : 0,
+            'created_at': product['created_at'].toString(),
+            'updated_at': product['updated_at'].toString(),
+            'sync_status': 1,
+          },
+          conflictAlgorithm: ConflictAlgorithm.replace,
+        );
+      }
+
+      // Sync stock movements
+      final remoteMovements = await remote.query('''
+        SELECT * FROM stock_movements WHERE movement_time > ?
+      ''', [lastSync]);
+
+      for (final movement in remoteMovements) {
+        await db.insert(
+          'stock_movements',
+          {
+            'movement_id': movement['movement_id'],
+            'product_id': movement['product_id'],
+            'movement_type': movement['movement_type'],
+            'quantity': movement['quantity'],
+            'unit_price': movement['unit_price'],
+            'total_amount': movement['total_amount'],
+            'notes': movement['notes'],
+            'movement_time': movement['movement_time'].toString(),
+            'created_by': movement['created_by'],
+            'sync_status': 1,
+          },
+          conflictAlgorithm: ConflictAlgorithm.replace,
+        );
+      }
+
+      // Update last sync timestamp
+      await _updateLastSyncTimestamp();
+
+      return true;
+    } catch (e) {
+      print('Sync from remote failed: $e');
+      return false;
+    }
+  }
+
+  // Perform full bidirectional sync
+  Future<bool> performFullSync() async {
+    try {
+      if (!await isOnline()) {
+        return false;
+      }
+
+      // First sync local changes to remote
+      final uploadSuccess = await syncToRemote();
+      if (!uploadSuccess) {
+        return false;
+      }
+
+      // Then sync remote changes to local
+      final downloadSuccess = await syncFromRemote();
+      return downloadSuccess;
+    } catch (e) {
+      print('Full sync failed: $e');
+      return false;
+    }
+  }
+
+  // Get count of pending sync items
+  Future<int> getPendingSyncCount() async {
+    final db = await localDatabase;
+    
+    final result = await db.rawQuery('''
+      SELECT 
+        (SELECT COUNT(*) FROM users WHERE sync_status = 0) +
+        (SELECT COUNT(*) FROM products WHERE sync_status = 0) +
+        (SELECT COUNT(*) FROM stock_movements WHERE sync_status = 0) +
+        (SELECT COUNT(*) FROM daily_summaries WHERE sync_status = 0) as total_pending
+    ''');
+    
+    return result.first['total_pending'] as int? ?? 0;
+  }
+
+  // Mark all pending items as synced
+  Future<void> _markAsSynced() async {
+    final db = await localDatabase;
+    
+    await db.transaction((txn) async {
+      await txn.update('users', {'sync_status': 1}, where: 'sync_status = 0');
+      await txn.update('products', {'sync_status': 1}, where: 'sync_status = 0');
+      await txn.update('stock_movements', {'sync_status': 1}, where: 'sync_status = 0');
+      await txn.update('daily_summaries', {'sync_status': 1}, where: 'sync_status = 0');
+    });
+  }
+
+  // Get last sync timestamp
+  Future<String> _getLastSyncTimestamp() async {
+    final db = await localDatabase;
+    
+    try {
+      final result = await db.query(
+        'app_settings',
+        where: 'key = ?',
+        whereArgs: ['last_sync_timestamp'],
+      );
+      
+      if (result.isNotEmpty) {
+        return result.first['value'] as String;
+      }
+    } catch (e) {
+      // Table might not exist, create it
+      await db.execute('''
+        CREATE TABLE IF NOT EXISTS app_settings (
+          key TEXT PRIMARY KEY,
+          value TEXT NOT NULL,
+          updated_at TEXT NOT NULL
+        )
+      ''');
+    }
+    
+    // Return a timestamp from 30 days ago as default
+    final defaultTimestamp = DateTime.now()
+        .subtract(const Duration(days: 30))
+        .toIso8601String();
+    
+    return defaultTimestamp;
+  }
+
+  // Update last sync timestamp
+  Future<void> _updateLastSyncTimestamp() async {
+    final db = await localDatabase;
+    final now = DateTime.now().toIso8601String();
+    
+    await db.insert(
+      'app_settings',
+      {
+        'key': 'last_sync_timestamp',
+        'value': now,
+        'updated_at': now,
+      },
+      conflictAlgorithm: ConflictAlgorithm.replace,
+    );
+  }
+
+  // Force mark item as needing sync (useful for conflict resolution)
+  Future<void> markForSync(String table, Map<String, dynamic> where) async {
+    final db = await localDatabase;
+    await db.update(
+      table,
+      {'sync_status': 0},
+      where: where.keys.map((key) => '$key = ?').join(' AND '),
+      whereArgs: where.values.toList(),
+    );
+  }
+
+  // Get sync status summary
+  Future<Map<String, dynamic>> getSyncStatus() async {
+    final db = await localDatabase;
+    final isConnected = await isOnline();
+    final pendingCount = await getPendingSyncCount();
+    
+    final lastSyncResult = await db.query(
+      'app_settings',
+      where: 'key = ?',
+      whereArgs: ['last_sync_timestamp'],
+    );
+    
+    String? lastSyncTime;
+    if (lastSyncResult.isNotEmpty) {
+      lastSyncTime = lastSyncResult.first['value'] as String?;
+    }
+    
+    return {
+      'isOnline': isConnected,
+      'pendingCount': pendingCount,
+      'lastSyncTime': lastSyncTime,
+      'needsSync': pendingCount > 0,
+    };
+  }
 }

@@ -6,6 +6,7 @@ import '../utils/helpers.dart';
 import '../models/user.dart';
 import '../providers/auth_provider.dart';
 import '../widgets/custom_card.dart';
+import '../widgets/sync_status_widget.dart';
 
 class SettingsScreen extends StatelessWidget {
   const SettingsScreen({super.key});
@@ -23,6 +24,10 @@ class SettingsScreen extends StatelessWidget {
           children: [
             // User Info Section
             _buildUserInfoSection(context),
+            const SizedBox(height: 20),
+            
+            // Sync Status Section
+            const SyncStatusWidget(),
             const SizedBox(height: 20),
             
             // Settings Options

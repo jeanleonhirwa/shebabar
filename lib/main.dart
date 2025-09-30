@@ -4,6 +4,7 @@ import 'app.dart';
 import 'providers/auth_provider.dart';
 import 'providers/stock_provider.dart';
 import 'providers/product_provider.dart';
+import 'providers/sync_provider.dart';
 
 void main() {
   runApp(const ShebaBarApp());
@@ -19,6 +20,7 @@ class ShebaBarApp extends StatelessWidget {
         ChangeNotifierProvider(create: (_) => AuthProvider()),
         ChangeNotifierProvider(create: (_) => StockProvider()),
         ChangeNotifierProvider(create: (_) => ProductProvider()),
+        ChangeNotifierProvider(create: (_) => SyncProvider()),
       ],
       child: const App(),
     );

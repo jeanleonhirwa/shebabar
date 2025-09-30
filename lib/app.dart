@@ -22,7 +22,12 @@ class _AppState extends State<App> {
 
   Future<void> _initializeApp() async {
     final authProvider = Provider.of<AuthProvider>(context, listen: false);
-    await authProvider.initialize();
+    final syncProvider = Provider.of<SyncProvider>(context, listen: false);
+    
+    await Future.wait([
+      authProvider.initialize(),
+      syncProvider.initialize(),
+    ]);
   }
 
   @override

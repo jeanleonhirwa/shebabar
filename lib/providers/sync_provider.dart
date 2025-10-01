@@ -1,10 +1,12 @@
-import 'package:flutter/foundation.dart';
 import 'dart:async';
+import 'package:flutter/foundation.dart';
+import 'package:flutter/material.dart';
 import '../services/database_service.dart';
 
 class SyncProvider extends ChangeNotifier {
   final DatabaseService _databaseService = DatabaseService();
   
+  // Private state variables
   bool _isOnline = false;
   bool _isSyncing = false;
   int _pendingCount = 0;
@@ -117,7 +119,9 @@ class SyncProvider extends ChangeNotifier {
       
       notifyListeners();
     } catch (e) {
-      print('Failed to update sync status: $e');
+      if (kDebugMode) {
+        print('Failed to update sync status: $e');
+      }
     }
   }
 
@@ -190,9 +194,9 @@ class SyncProvider extends ChangeNotifier {
   }
 
   // Mark specific item for sync
-  Future<void> markItemForSync(String table, Map<String, dynamic> where) async {
+  Future<void> markItemForSync(String table, int recordId) async {
     try {
-      await _databaseService.markForSync(table, where);
+      await _databaseService.markForSync(table, recordId);
       await _updateSyncStatus();
       _setSuccessMessage('Item yarongewe kuri sync');
     } catch (e) {

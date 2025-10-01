@@ -3,12 +3,9 @@ import 'package:mysql1/mysql1.dart' as mysql;
 import 'package:connectivity_plus/connectivity_plus.dart';
 import 'package:flutter/foundation.dart';
 import '../config/database_config.dart';
-import '../config/app_config.dart';
-import '../utils/constants.dart';
 import '../models/user.dart';
 import '../models/product.dart';
 import '../models/stock_movement.dart';
-import '../models/daily_summary.dart';
 
 class DatabaseService {
   static Database? _localDatabase;
@@ -24,7 +21,9 @@ class DatabaseService {
       try {
         _localDatabase = await DatabaseConfig.initializeLocalDatabase();
       } catch (e) {
-        print('Local database initialization failed: $e');
+        if (kDebugMode) {
+          print('Local database initialization failed: $e');
+        }
         // Fallback to in-memory database
         _localDatabase = await _initializeWebDatabase();
       }
@@ -65,7 +64,9 @@ class DatabaseService {
       );
       return _remoteConnection;
     } catch (e) {
-      print('MySQL connection failed: $e');
+      if (kDebugMode) {
+        print('MySQL connection failed: $e');
+      }
       return null;
     }
   }
@@ -114,7 +115,9 @@ class DatabaseService {
         }
       }
     } catch (e) {
-      print('MySQL query failed, using local database: $e');
+      if (kDebugMode) {
+        print('MySQL query failed, using local database: $e');
+      }
     }
     
     // Fallback to local database
@@ -192,22 +195,23 @@ class DatabaseService {
     return null;
   }
 
-  Future<List<Product>> getAllProducts() async {
+  Future<List<Product>> getAllProducts({bool activeOnly = true}) async {
     final db = await localDatabase;
     final maps = await db.query(
       'products',
-      where: 'is_active = 1',
+      where: activeOnly ? 'is_active = 1' : null,
       orderBy: 'product_name',
     );
     return maps.map((map) => Product.fromMap(map)).toList();
   }
 
-  Future<List<Product>> getProductsByCategory(String category) async {
+  Future<List<Product>> getProductsByCategory(ProductCategory category) async {
     final db = await localDatabase;
+    final categoryString = category.toString().split('.').last;
     final maps = await db.query(
       'products',
       where: 'category = ? AND is_active = 1',
-      whereArgs: [category],
+      whereArgs: [categoryString],
       orderBy: 'product_name',
     );
     return maps.map((map) => Product.fromMap(map)).toList();
@@ -461,7 +465,9 @@ class DatabaseService {
       
       return true;
     } catch (e) {
-      print('Full sync failed: $e');
+      if (kDebugMode) {
+        print('Full sync failed: $e');
+      }
       return false;
     }
   }

@@ -23,7 +23,6 @@ class StockMovement {
     required this.movementDate,
     required this.movementTime,
     this.createdAt,
-    this.syncStatus = 0,
   });
 
   factory StockMovement.fromMap(Map<String, dynamic> map) {
@@ -43,7 +42,6 @@ class StockMovement {
       createdAt: map['created_at'] != null 
           ? DateTime.parse(map['created_at']) 
           : null,
-      syncStatus: map['sync_status'] ?? 0,
     );
   }
 
@@ -60,23 +58,21 @@ class StockMovement {
       'movement_date': movementDate.toIso8601String().split('T')[0],
       'movement_time': movementTime.toIso8601String(),
       'created_at': createdAt?.toIso8601String(),
-      'sync_status': syncStatus,
     };
   }
 
   StockMovement copyWith({
-    int? movementId,
-    int? productId,
+    String? movementId,
+    String? productId,
     MovementType? movementType,
     int? quantity,
     double? unitPrice,
     double? totalAmount,
     String? notes,
-    int? userId,
+    String? userId,
     DateTime? movementDate,
     DateTime? movementTime,
     DateTime? createdAt,
-    int? syncStatus,
   }) {
     return StockMovement(
       movementId: movementId ?? this.movementId,
@@ -90,7 +86,6 @@ class StockMovement {
       movementDate: movementDate ?? this.movementDate,
       movementTime: movementTime ?? this.movementTime,
       createdAt: createdAt ?? this.createdAt,
-      syncStatus: syncStatus ?? this.syncStatus,
     );
   }
 

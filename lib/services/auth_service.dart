@@ -1,10 +1,11 @@
 import 'package:crypto/crypto.dart';
 import 'package:flutter_secure_storage/flutter_secure_storage.dart';
 import 'package:shared_preferences/shared_preferences.dart';
+import 'package:firebase_auth/firebase_auth.dart' as firebase_auth;
 import 'dart:convert';
-import '../models/user.dart';
+import '../models/user.dart' as app_user;
 import '../config/app_config.dart';
-import 'database_service.dart';
+import 'firebase_service.dart';
 
 class AuthService {
   static final AuthService _instance = AuthService._internal();
@@ -17,11 +18,11 @@ class AuthService {
   static const String _lastLoginKey = 'last_login';
   static const String _rememberMeKey = 'remember_me';
 
-  final DatabaseService _databaseService = DatabaseService();
-  User? _currentUser;
+  final FirebaseService _firebaseService = FirebaseService();
+  app_user.User? _currentUser;
 
   // Get current user
-  User? get currentUser => _currentUser;
+  app_user.User? get currentUser => _currentUser;
   bool get isLoggedIn => _currentUser != null;
 
   // Initialize authentication service
@@ -38,8 +39,8 @@ class AuthService {
         return AuthResult.failure('Uzuza izina n\'ijambo ryibanga');
       }
 
-      // Get user from database
-      final user = await _databaseService.getUserByUsername(username.trim());
+      // Get user from Firebase
+      final user = await _firebaseService.getUserByUsername(username.trim());
       if (user == null) {
         return AuthResult.failure('Izina cyangwa ijambo ryibanga ntibikwiye');
       }
@@ -56,7 +57,7 @@ class AuthService {
 
       // Update last login
       final updatedUser = user.copyWith(lastLogin: DateTime.now());
-      await _databaseService.updateUser(updatedUser);
+      await _firebaseService.updateUserProfile(updatedUser);
 
       // Set current user
       _currentUser = updatedUser;
@@ -70,17 +71,81 @@ class AuthService {
     }
   }
 
+  // Login with Firebase Auth (email/password)
+  Future<AuthResult> loginWithFirebaseAuth(String email, String password, {bool rememberMe = false}) async {
+    try {
+      // Validate input
+      if (email.trim().isEmpty || password.isEmpty) {
+        return AuthResult.failure('Uzuza email n\'ijambo ryibanga');
+      }
+
+      // Sign in with Firebase Auth
+      final credential = await _firebaseService.signInWithEmailAndPassword(email, password);
+      if (credential?.user == null) {
+        return AuthResult.failure('Ntibyashobotse kwinjira');
+      }
+
+      // Get user profile from Firestore
+      final userProfile = await _firebaseService.getUserProfile(credential!.user!.uid);
+      if (userProfile == null) {
+        return AuthResult.failure('Profil y\'ukoresha ntiboneka');
+      }
+
+      // Check if user is active
+      if (!userProfile.isActive) {
+        return AuthResult.failure('Konti yawe ntikiri ikora');
+      }
+
+      // Update last login
+      final updatedUser = userProfile.copyWith(lastLogin: DateTime.now());
+      await _firebaseService.updateUserProfile(updatedUser);
+
+      // Set current user
+      _currentUser = updatedUser;
+
+      // Save session
+      await _saveSession(updatedUser, rememberMe);
+
+      return AuthResult.success(updatedUser);
+    } on firebase_auth.FirebaseAuthException catch (e) {
+      switch (e.code) {
+        case 'user-not-found':
+          return AuthResult.failure('Nta mukoresha uboneka');
+        case 'wrong-password':
+          return AuthResult.failure('Ijambo ryibanga ntikwiye');
+        case 'invalid-email':
+          return AuthResult.failure('Email ntikwiye');
+        case 'user-disabled':
+          return AuthResult.failure('Konti yahagaritswe');
+        default:
+          return AuthResult.failure('Habayeho ikosa: ${e.message}');
+      }
+    } catch (e) {
+      return AuthResult.failure('Habayeho ikosa: ${e.toString()}');
+    }
+  }
+
   // Logout
   Future<void> logout() async {
     _currentUser = null;
     await _clearSession();
+    await _firebaseService.signOut();
   }
 
   // Change password
   Future<AuthResult> changePassword(String currentPassword, String newPassword) async {
     try {
       if (_currentUser == null) {
-        return AuthResult.failure('Ntujyewe muri sisitemu');
+        return AuthResult.failure('Ntiwinjiye muri sisiteme');
+      }
+
+      // Validate input
+      if (currentPassword.isEmpty || newPassword.isEmpty) {
+        return AuthResult.failure('Uzuza amajambo yombi');
+      }
+
+      if (newPassword.length < 6) {
+        return AuthResult.failure('Ijambo ryibanga rigomba kuba rifite byibura inyuguti 6');
       }
 
       // Verify current password
@@ -88,96 +153,117 @@ class AuthService {
         return AuthResult.failure('Ijambo ryibanga rya none ntikwiye');
       }
 
-      // Validate new password
-      if (newPassword.length < 4) {
-        return AuthResult.failure('Ijambo ryibanga rishya rigomba kuba rifite ibyangombwa 4 byibuze');
-      }
-
       // Hash new password
       final newPasswordHash = _hashPassword(newPassword);
 
       // Update user
       final updatedUser = _currentUser!.copyWith(passwordHash: newPasswordHash);
-      await _databaseService.updateUser(updatedUser);
+      await _firebaseService.updateUserProfile(updatedUser);
 
       _currentUser = updatedUser;
+      await _saveCurrentUser(updatedUser);
 
       return AuthResult.success(updatedUser);
     } catch (e) {
-      return AuthResult.failure('Habayeho ikosa: ${e.toString()}');
+      return AuthResult.failure('Ntibyashobotse guhindura ijambo ryibanga: ${e.toString()}');
     }
   }
 
-  // Create new user (owner only)
+  // Create new user account
   Future<AuthResult> createUser({
     required String username,
     required String password,
     required String fullName,
-    required UserRole role,
+    required app_user.UserRole role,
+    String? email,
   }) async {
     try {
-      // Check if current user is owner
-      if (_currentUser?.role != UserRole.owner) {
-        return AuthResult.failure('Ntufite uburenganzira bwo gukora konti');
-      }
-
       // Validate input
       if (username.trim().isEmpty || password.isEmpty || fullName.trim().isEmpty) {
         return AuthResult.failure('Uzuza amakuru yose');
       }
 
-      // Check if username already exists
-      final existingUser = await _databaseService.getUserByUsername(username.trim());
-      if (existingUser != null) {
-        return AuthResult.failure('Iri zina rihari');
+      if (password.length < 6) {
+        return AuthResult.failure('Ijambo ryibanga rigomba kuba rifite byibura inyuguti 6');
       }
 
-      // Create new user
-      final newUser = User(
+      // Check if username already exists
+      final existingUser = await _firebaseService.getUserByUsername(username.trim());
+      if (existingUser != null) {
+        return AuthResult.failure('Iri zina rirasanzwe rikoreshwa');
+      }
+
+      // Create user profile
+      final newUser = app_user.User(
         username: username.trim(),
         passwordHash: _hashPassword(password),
         fullName: fullName.trim(),
         role: role,
         createdAt: DateTime.now(),
+        isActive: true,
       );
 
-      final userId = await _databaseService.insertUser(newUser);
-      final createdUser = newUser.copyWith(userId: userId);
+      // If email is provided, create Firebase Auth account
+      if (email != null && email.isNotEmpty) {
+        final credential = await _firebaseService.createUserWithEmailAndPassword(email, password);
+        if (credential?.user != null) {
+          // Use Firebase Auth UID as user ID
+          final userWithId = app_user.User(
+            userId: credential!.user!.uid,
+            username: username.trim(),
+            passwordHash: _hashPassword(password),
+            fullName: fullName.trim(),
+            role: role,
+            createdAt: DateTime.now(),
+            isActive: true,
+          );
+          await _firebaseService.createUserProfile(userWithId);
+          return AuthResult.success(userWithId);
+        }
+      } else {
+        // Create user profile without Firebase Auth
+        await _firebaseService.createUserProfile(newUser);
+        return AuthResult.success(newUser);
+      }
 
-      return AuthResult.success(createdUser);
+      return AuthResult.failure('Ntibyashobotse kurema konti');
     } catch (e) {
-      return AuthResult.failure('Habayeho ikosa: ${e.toString()}');
+      return AuthResult.failure('Ntibyashobotse kurema konti: ${e.toString()}');
     }
   }
 
-  // Update user (owner only)
-  Future<AuthResult> updateUser(User user) async {
+  // Update user profile
+  Future<AuthResult> updateProfile({
+    String? fullName,
+    app_user.UserRole? role,
+  }) async {
     try {
-      // Check if current user is owner or updating themselves
-      if (_currentUser?.role != UserRole.owner && _currentUser?.userId != user.userId) {
-        return AuthResult.failure('Ntufite uburenganzira bwo guhindura uyu mukoresha');
+      if (_currentUser == null) {
+        return AuthResult.failure('Ntiwinjiye muri sisiteme');
       }
 
-      await _databaseService.updateUser(user);
+      final updatedUser = _currentUser!.copyWith(
+        fullName: fullName,
+        role: role,
+      );
 
-      // Update current user if it's the same user
-      if (_currentUser?.userId == user.userId) {
-        _currentUser = user;
-        await _saveCurrentUser(user);
-      }
+      await _firebaseService.updateUserProfile(updatedUser);
+      _currentUser = updatedUser;
+      await _saveCurrentUser(updatedUser);
 
-      return AuthResult.success(user);
+      return AuthResult.success(updatedUser);
     } catch (e) {
-      return AuthResult.failure('Habayeho ikosa: ${e.toString()}');
+      return AuthResult.failure('Ntibyashobotse kuvugurura profil: ${e.toString()}');
     }
   }
 
-  // Get all users (owner only)
-  Future<List<User>> getAllUsers() async {
-    if (_currentUser?.role != UserRole.owner) {
+  // Get all users (admin only)
+  Future<List<app_user.User>> getAllUsers() async {
+    try {
+      return await _firebaseService.getAllUsers();
+    } catch (e) {
       return [];
     }
-    return await _databaseService.getAllUsers();
   }
 
   // Hash password using SHA-256
@@ -193,7 +279,7 @@ class AuthService {
   }
 
   // Save session
-  Future<void> _saveSession(User user, bool rememberMe) async {
+  Future<void> _saveSession(app_user.User user, bool rememberMe) async {
     final prefs = await SharedPreferences.getInstance();
     
     // Generate session token
@@ -209,7 +295,7 @@ class AuthService {
   }
 
   // Save current user
-  Future<void> _saveCurrentUser(User user) async {
+  Future<void> _saveCurrentUser(app_user.User user) async {
     await _storage.write(key: _currentUserKey, value: jsonEncode(user.toMap()));
   }
 
@@ -218,8 +304,30 @@ class AuthService {
     try {
       final userJson = await _storage.read(key: _currentUserKey);
       if (userJson != null) {
-        final userMap = jsonDecode(userJson);
-        _currentUser = User.fromMap(userMap);
+        final userMap = jsonDecode(userJson) as Map<String, dynamic>;
+        _currentUser = app_user.User.fromMap(userMap);
+      }
+    } catch (e) {
+      // Clear invalid session
+      await _clearSession();
+    }
+  }
+
+  // Check session expiry
+  Future<void> _checkSessionExpiry() async {
+    try {
+      final prefs = await SharedPreferences.getInstance();
+      final lastLoginString = prefs.getString(_lastLoginKey);
+      
+      if (lastLoginString != null) {
+        final lastLogin = DateTime.parse(lastLoginString);
+        final now = DateTime.now();
+        final difference = now.difference(lastLogin);
+        
+        // Session expires after configured hours
+        if (difference.inHours > AppConfig.sessionTimeoutHours) {
+          await logout();
+        }
       }
     } catch (e) {
       // Clear invalid session
@@ -233,109 +341,31 @@ class AuthService {
     await _storage.delete(key: _sessionTokenKey);
     
     final prefs = await SharedPreferences.getInstance();
+    await prefs.remove(_lastLoginKey);
     await prefs.remove(_rememberMeKey);
-  }
-
-  // Check session expiry
-  Future<void> _checkSessionExpiry() async {
-    if (_currentUser == null) return;
-
-    try {
-      final prefs = await SharedPreferences.getInstance();
-      final lastLoginStr = prefs.getString(_lastLoginKey);
-      final rememberMe = prefs.getBool(_rememberMeKey) ?? false;
-
-      if (lastLoginStr != null) {
-        final lastLogin = DateTime.parse(lastLoginStr);
-        final now = DateTime.now();
-        final sessionDuration = now.difference(lastLogin);
-
-        // Check if session expired (8 hours for regular, 30 days for remember me)
-        final maxDuration = rememberMe 
-            ? const Duration(days: 30)
-            : Duration(hours: AppConfig.sessionTimeoutHours);
-
-        if (sessionDuration > maxDuration) {
-          await logout();
-        }
-      }
-    } catch (e) {
-      // Clear invalid session
-      await logout();
-    }
   }
 
   // Generate session token
   String _generateSessionToken() {
-    final timestamp = DateTime.now().millisecondsSinceEpoch.toString();
-    final random = DateTime.now().microsecondsSinceEpoch.toString();
-    final combined = '$timestamp$random';
-    final bytes = utf8.encode(combined);
-    final digest = sha256.convert(bytes);
-    return digest.toString();
-  }
-
-  // Check if user has permission
-  bool hasPermission(Permission permission) {
-    if (_currentUser == null) return false;
-
-    switch (permission) {
-      case Permission.manageProducts:
-        return _currentUser!.role.canManageProducts;
-      case Permission.manageUsers:
-        return _currentUser!.role.canManageUsers;
-      case Permission.viewDetailedReports:
-        return _currentUser!.role.canViewDetailedReports;
-      case Permission.exportReports:
-        return _currentUser!.role.canExportReports;
-      case Permission.recordStock:
-        return true; // All users can record stock
-      case Permission.viewDashboard:
-        return true; // All users can view dashboard
-    }
-  }
-
-  // Auto-login check
-  Future<bool> checkAutoLogin() async {
-    try {
-      final prefs = await SharedPreferences.getInstance();
-      final rememberMe = prefs.getBool(_rememberMeKey) ?? false;
-      
-      if (rememberMe && _currentUser != null) {
-        await _checkSessionExpiry();
-        return _currentUser != null;
-      }
-      
-      return false;
-    } catch (e) {
-      return false;
-    }
+    final now = DateTime.now().millisecondsSinceEpoch;
+    final random = DateTime.now().microsecondsSinceEpoch;
+    return _hashPassword('$now-$random');
   }
 }
 
-// Authentication result class
+// Auth result class
 class AuthResult {
   final bool success;
   final String? message;
-  final User? user;
+  final app_user.User? user;
 
-  AuthResult._(this.success, this.message, this.user);
+  AuthResult._({required this.success, this.message, this.user});
 
-  factory AuthResult.success(User user) {
-    return AuthResult._(true, null, user);
+  factory AuthResult.success(app_user.User user) {
+    return AuthResult._(success: true, user: user);
   }
 
   factory AuthResult.failure(String message) {
-    return AuthResult._(false, message, null);
+    return AuthResult._(success: false, message: message);
   }
-}
-
-// Permissions enum
-enum Permission {
-  manageProducts,
-  manageUsers,
-  viewDetailedReports,
-  exportReports,
-  recordStock,
-  viewDashboard,
 }

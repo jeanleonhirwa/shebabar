@@ -1,24 +1,21 @@
 import '../models/product.dart';
-import '../utils/constants.dart';
-import 'database_service.dart';
-import 'auth_service.dart';
+import 'firebase_service.dart';
 
 class ProductService {
   static final ProductService _instance = ProductService._internal();
   factory ProductService() => _instance;
   ProductService._internal();
 
-  final DatabaseService _databaseService = DatabaseService();
-  final AuthService _authService = AuthService();
+  final FirebaseService _firebaseService = FirebaseService();
 
   // Get all products
   Future<List<Product>> getAllProducts({bool activeOnly = true}) async {
-    return await _databaseService.getAllProducts(activeOnly: activeOnly);
+    return await _firebaseService.getAllProducts(activeOnly: activeOnly);
   }
 
   // Get products by category
   Future<List<Product>> getProductsByCategory(ProductCategory category) async {
-    return await _databaseService.getProductsByCategory(category);
+    return await _firebaseService.getProductsByCategory(category);
   }
 
   // Search products
@@ -26,15 +23,45 @@ class ProductService {
     if (query.trim().isEmpty) {
       return await getAllProducts();
     }
-    return await _databaseService.searchProducts(query.trim());
+    return await _firebaseService.searchProducts(query);
   }
 
   // Get product by ID
-  Future<Product?> getProductById(int productId) async {
-    return await _databaseService.getProductById(productId);
+  Future<Product?> getProductById(String productId) async {
+    return await _firebaseService.getProductById(productId);
   }
 
-  // Add new product (owner only)
+  // Get products by category name (string)
+  Future<List<Product>> getProductsByCategoryName(String categoryName) async {
+    try {
+      final category = ProductCategory.values.firstWhere(
+        (e) => e.toString().split('.').last == categoryName,
+      );
+      return await getProductsByCategory(category);
+    } catch (e) {
+      return [];
+    }
+  }
+
+  // Get low stock products
+  Future<List<Product>> getLowStockProducts() async {
+    final allProducts = await getAllProducts();
+    return allProducts.where((product) => product.isLowStock).toList();
+  }
+
+  // Get critical stock products
+  Future<List<Product>> getCriticalStockProducts() async {
+    final allProducts = await getAllProducts();
+    return allProducts.where((product) => product.isCriticalStock).toList();
+  }
+
+  // Get out of stock products
+  Future<List<Product>> getOutOfStockProducts() async {
+    final allProducts = await getAllProducts();
+    return allProducts.where((product) => product.isOutOfStock).toList();
+  }
+
+  // Add new product
   Future<ProductResult> addProduct({
     required String productName,
     required ProductCategory category,
@@ -43,14 +70,9 @@ class ProductService {
     int minStockLevel = 5,
   }) async {
     try {
-      // Check permissions
-      if (!_authService.hasPermission(Permission.manageProducts)) {
-        return ProductResult.failure('Ntufite uburenganzira bwo gukora ibicuruzwa');
-      }
-
       // Validate input
       if (productName.trim().isEmpty) {
-        return ProductResult.failure('Izina ry\'icyicuruzwa rikenewe');
+        return ProductResult.failure('Izina ry\'igicuruzwa kirakenewe');
       }
 
       if (unitPrice <= 0) {
@@ -62,13 +84,13 @@ class ProductService {
       }
 
       if (minStockLevel < 0) {
-        return ProductResult.failure('Stock ntoya ntishobora kuba munsi ya 0');
+        return ProductResult.failure('Urwego rw\'ibanze rwa stock ntirushobora kuba munsi ya 0');
       }
 
-      // Check if product name already exists
+      // Check if product with same name already exists
       final existingProducts = await searchProducts(productName.trim());
       final duplicateProduct = existingProducts.firstWhere(
-        (p) => p.productName.toLowerCase() == productName.trim().toLowerCase(),
+        (product) => product.productName.toLowerCase() == productName.trim().toLowerCase(),
         orElse: () => Product(
           productName: '',
           category: category,
@@ -77,41 +99,40 @@ class ProductService {
       );
 
       if (duplicateProduct.productName.isNotEmpty) {
-        return ProductResult.failure(AppConstants.productExists);
+        return ProductResult.failure('Igicuruzwa gifite iri zina kirasanzwe kibaho');
       }
 
       // Create new product
-      final product = Product(
+      final newProduct = Product(
         productName: productName.trim(),
         category: category,
         unitPrice: unitPrice,
         currentStock: currentStock,
         minStockLevel: minStockLevel,
+        isActive: true,
         createdAt: DateTime.now(),
         updatedAt: DateTime.now(),
       );
 
-      // Insert product
-      final productId = await _databaseService.insertProduct(product);
-      final createdProduct = product.copyWith(productId: productId);
+      final productId = await _firebaseService.addProduct(newProduct);
+      final createdProduct = newProduct.copyWith(productId: productId);
 
       return ProductResult.success(createdProduct);
     } catch (e) {
-      return ProductResult.failure('Habayeho ikosa: ${e.toString()}');
+      return ProductResult.failure('Ntibyashobotse kongeramo igicuruzwa: ${e.toString()}');
     }
   }
 
-  // Update product (owner only)
+  // Update product
   Future<ProductResult> updateProduct(Product product) async {
     try {
-      // Check permissions
-      if (!_authService.hasPermission(Permission.manageProducts)) {
-        return ProductResult.failure('Ntufite uburenganzira bwo guhindura ibicuruzwa');
+      if (product.productId == null) {
+        return ProductResult.failure('ID y\'igicuruzwa irakenewe');
       }
 
       // Validate input
       if (product.productName.trim().isEmpty) {
-        return ProductResult.failure('Izina ry\'icyicuruzwa rikenewe');
+        return ProductResult.failure('Izina ry\'igicuruzwa kirakenewe');
       }
 
       if (product.unitPrice <= 0) {
@@ -122,292 +143,249 @@ class ProductService {
         return ProductResult.failure('Stock ntishobora kuba munsi ya 0');
       }
 
-      // Update product with current timestamp
+      if (product.minStockLevel < 0) {
+        return ProductResult.failure('Urwego rw\'ibanze rwa stock ntirushobora kuba munsi ya 0');
+      }
+
       final updatedProduct = product.copyWith(updatedAt: DateTime.now());
-      await _databaseService.updateProduct(updatedProduct);
+      await _firebaseService.updateProduct(updatedProduct);
 
       return ProductResult.success(updatedProduct);
     } catch (e) {
-      return ProductResult.failure('Habayeho ikosa: ${e.toString()}');
+      return ProductResult.failure('Ntibyashobotse kuvugurura igicuruzwa: ${e.toString()}');
     }
   }
 
-  // Archive product (soft delete - owner only)
-  Future<ProductResult> archiveProduct(int productId) async {
-    try {
-      // Check permissions
-      if (!_authService.hasPermission(Permission.manageProducts)) {
-        return ProductResult.failure('Ntufite uburenganzira bwo gukuraho ibicuruzwa');
-      }
-
-      // Get product
-      final product = await _databaseService.getProductById(productId);
-      if (product == null) {
-        return ProductResult.failure('Icyicuruzwa ntikiboneka');
-      }
-
-      // Archive product
-      final archivedProduct = product.copyWith(
-        isActive: false,
-        updatedAt: DateTime.now(),
-      );
-
-      await _databaseService.updateProduct(archivedProduct);
-
-      return ProductResult.success(archivedProduct);
-    } catch (e) {
-      return ProductResult.failure('Habayeho ikosa: ${e.toString()}');
-    }
-  }
-
-  // Restore archived product (owner only)
-  Future<ProductResult> restoreProduct(int productId) async {
-    try {
-      // Check permissions
-      if (!_authService.hasPermission(Permission.manageProducts)) {
-        return ProductResult.failure('Ntufite uburenganzira bwo gusubiza ibicuruzwa');
-      }
-
-      // Get product
-      final product = await _databaseService.getProductById(productId);
-      if (product == null) {
-        return ProductResult.failure('Icyicuruzwa ntikiboneka');
-      }
-
-      // Restore product
-      final restoredProduct = product.copyWith(
-        isActive: true,
-        updatedAt: DateTime.now(),
-      );
-
-      await _databaseService.updateProduct(restoredProduct);
-
-      return ProductResult.success(restoredProduct);
-    } catch (e) {
-      return ProductResult.failure('Habayeho ikosa: ${e.toString()}');
-    }
-  }
-
-  // Get products grouped by category
-  Future<Map<ProductCategory, List<Product>>> getProductsGroupedByCategory() async {
-    final products = await getAllProducts();
-    final Map<ProductCategory, List<Product>> groupedProducts = {};
-
-    for (final product in products) {
-      if (!groupedProducts.containsKey(product.category)) {
-        groupedProducts[product.category] = [];
-      }
-      groupedProducts[product.category]!.add(product);
-    }
-
-    // Sort products within each category
-    for (final category in groupedProducts.keys) {
-      groupedProducts[category]!.sort((a, b) => a.productName.compareTo(b.productName));
-    }
-
-    return groupedProducts;
-  }
-
-  // Get low stock products
-  Future<List<Product>> getLowStockProducts() async {
-    final products = await getAllProducts();
-    return products.where((product) => product.isLowStock).toList();
-  }
-
-  // Get out of stock products
-  Future<List<Product>> getOutOfStockProducts() async {
-    final products = await getAllProducts();
-    return products.where((product) => product.isOutOfStock).toList();
-  }
-
-  // Get critical stock products
-  Future<List<Product>> getCriticalStockProducts() async {
-    final products = await getAllProducts();
-    return products.where((product) => product.isCriticalStock).toList();
-  }
-
-  // Update product stock (used by stock service)
-  Future<ProductResult> updateProductStock(int productId, int newStock) async {
+  // Update product stock
+  Future<ProductResult> updateProductStock(String productId, int newStock) async {
     try {
       if (newStock < 0) {
         return ProductResult.failure('Stock ntishobora kuba munsi ya 0');
       }
 
-      await _databaseService.updateProductStock(productId, newStock);
-
-      final updatedProduct = await _databaseService.getProductById(productId);
-      if (updatedProduct == null) {
-        return ProductResult.failure('Icyicuruzwa ntikiboneka');
+      await _firebaseService.updateProductStock(productId, newStock);
+      
+      // Get updated product
+      final updatedProduct = await getProductById(productId);
+      if (updatedProduct != null) {
+        return ProductResult.success(updatedProduct);
+      } else {
+        return ProductResult.failure('Igicuruzwa ntikiboneka');
       }
-
-      return ProductResult.success(updatedProduct);
     } catch (e) {
-      return ProductResult.failure('Habayeho ikosa: ${e.toString()}');
+      return ProductResult.failure('Ntibyashobotse kuvugurura stock: ${e.toString()}');
     }
   }
 
-  // Get product statistics
-  Future<ProductStats> getProductStats() async {
-    final products = await getAllProducts();
-    
-    int totalProducts = products.length;
-    int inStockProducts = products.where((p) => p.currentStock > 0).length;
-    int lowStockProducts = products.where((p) => p.isLowStock).length;
-    int outOfStockProducts = products.where((p) => p.isOutOfStock).length;
-    
-    double totalStockValue = products.fold(0.0, (sum, p) => sum + p.totalValue);
-    
-    // Group by category
-    Map<ProductCategory, int> categoryCount = {};
-    Map<ProductCategory, double> categoryValue = {};
-    
-    for (final product in products) {
-      categoryCount[product.category] = (categoryCount[product.category] ?? 0) + 1;
-      categoryValue[product.category] = (categoryValue[product.category] ?? 0.0) + product.totalValue;
-    }
-
-    return ProductStats(
-      totalProducts: totalProducts,
-      inStockProducts: inStockProducts,
-      lowStockProducts: lowStockProducts,
-      outOfStockProducts: outOfStockProducts,
-      totalStockValue: totalStockValue,
-      categoryCount: categoryCount,
-      categoryValue: categoryValue,
-    );
-  }
-
-  // Validate product data
-  Future<ValidationResult> validateProduct({
-    required String productName,
-    required ProductCategory category,
-    required double unitPrice,
-    required int currentStock,
-    required int minStockLevel,
-    int? excludeProductId,
-  }) async {
+  // Deactivate product (soft delete)
+  Future<ProductResult> deactivateProduct(String productId) async {
     try {
-      // Validate product name
-      if (productName.trim().isEmpty) {
-        return ValidationResult.failure('Izina ry\'icyicuruzwa rikenewe');
+      final product = await getProductById(productId);
+      if (product == null) {
+        return ProductResult.failure('Igicuruzwa ntikiboneka');
       }
 
-      if (productName.trim().length < 2) {
-        return ValidationResult.failure('Izina ry\'icyicuruzwa rigomba kuba rifite ibyangombwa 2 byibuze');
-      }
-
-      if (productName.trim().length > 50) {
-        return ValidationResult.failure('Izina ry\'icyicuruzwa ntirirenze ibyangombwa 50');
-      }
-
-      // Check for duplicate name
-      final existingProducts = await searchProducts(productName.trim());
-      final duplicateProduct = existingProducts.firstWhere(
-        (p) => p.productName.toLowerCase() == productName.trim().toLowerCase() &&
-               p.productId != excludeProductId,
-        orElse: () => Product(
-          productName: '',
-          category: category,
-          unitPrice: 0,
-        ),
+      final deactivatedProduct = product.copyWith(
+        isActive: false,
+        updatedAt: DateTime.now(),
       );
 
-      if (duplicateProduct.productName.isNotEmpty) {
-        return ValidationResult.failure(AppConstants.productExists);
-      }
-
-      // Validate price
-      if (unitPrice <= 0) {
-        return ValidationResult.failure('Igiciro kigomba kuba kirenze 0');
-      }
-
-      if (unitPrice > 1000000) {
-        return ValidationResult.failure('Igiciro ntikigomba kurenza 1,000,000');
-      }
-
-      // Validate stock
-      if (currentStock < 0) {
-        return ValidationResult.failure('Stock ntishobora kuba munsi ya 0');
-      }
-
-      if (currentStock > 100000) {
-        return ValidationResult.failure('Stock ntishobora kurenza 100,000');
-      }
-
-      // Validate min stock level
-      if (minStockLevel < 0) {
-        return ValidationResult.failure('Stock ntoya ntishobora kuba munsi ya 0');
-      }
-
-      if (minStockLevel > 1000) {
-        return ValidationResult.failure('Stock ntoya ntishobora kurenza 1,000');
-      }
-
-      return ValidationResult.success();
+      await _firebaseService.updateProduct(deactivatedProduct);
+      return ProductResult.success(deactivatedProduct);
     } catch (e) {
-      return ValidationResult.failure('Habayeho ikosa: ${e.toString()}');
+      return ProductResult.failure('Ntibyashobotse gufunga igicuruzwa: ${e.toString()}');
     }
+  }
+
+  // Reactivate product
+  Future<ProductResult> reactivateProduct(String productId) async {
+    try {
+      final product = await getProductById(productId);
+      if (product == null) {
+        return ProductResult.failure('Igicuruzwa ntikiboneka');
+      }
+
+      final reactivatedProduct = product.copyWith(
+        isActive: true,
+        updatedAt: DateTime.now(),
+      );
+
+      await _firebaseService.updateProduct(reactivatedProduct);
+      return ProductResult.success(reactivatedProduct);
+    } catch (e) {
+      return ProductResult.failure('Ntibyashobotse gufungura igicuruzwa: ${e.toString()}');
+    }
+  }
+
+  // Get products summary
+  Future<ProductsSummary> getProductsSummary() async {
+    try {
+      final allProducts = await getAllProducts(activeOnly: false);
+      final activeProducts = allProducts.where((p) => p.isActive).toList();
+      final inactiveProducts = allProducts.where((p) => !p.isActive).toList();
+      final lowStockProducts = activeProducts.where((p) => p.isLowStock).toList();
+      final criticalStockProducts = activeProducts.where((p) => p.isCriticalStock).toList();
+      final outOfStockProducts = activeProducts.where((p) => p.isOutOfStock).toList();
+
+      double totalValue = 0;
+      int totalStock = 0;
+
+      for (final product in activeProducts) {
+        totalValue += product.totalValue;
+        totalStock += product.currentStock;
+      }
+
+      return ProductsSummary(
+        totalProducts: allProducts.length,
+        activeProducts: activeProducts.length,
+        inactiveProducts: inactiveProducts.length,
+        lowStockProducts: lowStockProducts.length,
+        criticalStockProducts: criticalStockProducts.length,
+        outOfStockProducts: outOfStockProducts.length,
+        totalStockValue: totalValue,
+        totalStockQuantity: totalStock,
+      );
+    } catch (e) {
+      return ProductsSummary(
+        totalProducts: 0,
+        activeProducts: 0,
+        inactiveProducts: 0,
+        lowStockProducts: 0,
+        criticalStockProducts: 0,
+        outOfStockProducts: 0,
+        totalStockValue: 0,
+        totalStockQuantity: 0,
+      );
+    }
+  }
+
+  // Get products by stock status
+  Future<List<Product>> getProductsByStockStatus(StockStatus status) async {
+    final allProducts = await getAllProducts();
+    
+    switch (status) {
+      case StockStatus.inStock:
+        return allProducts.where((p) => !p.isOutOfStock && !p.isLowStock).toList();
+      case StockStatus.lowStock:
+        return allProducts.where((p) => p.isLowStock && !p.isCriticalStock).toList();
+      case StockStatus.criticalStock:
+        return allProducts.where((p) => p.isCriticalStock && !p.isOutOfStock).toList();
+      case StockStatus.outOfStock:
+        return allProducts.where((p) => p.isOutOfStock).toList();
+    }
+  }
+
+  // Bulk update stock levels
+  Future<BulkUpdateResult> bulkUpdateStock(Map<String, int> stockUpdates) async {
+    final results = <String, ProductResult>{};
+    int successCount = 0;
+    int failureCount = 0;
+
+    for (final entry in stockUpdates.entries) {
+      final productId = entry.key;
+      final newStock = entry.value;
+      
+      final result = await updateProductStock(productId, newStock);
+      results[productId] = result;
+      
+      if (result.success) {
+        successCount++;
+      } else {
+        failureCount++;
+      }
+    }
+
+    return BulkUpdateResult(
+      results: results,
+      successCount: successCount,
+      failureCount: failureCount,
+      totalCount: stockUpdates.length,
+    );
   }
 
   // Initialize default products if none exist
   Future<void> initializeDefaultProducts() async {
-    await _databaseService.initializeDefaultProducts();
+    await _firebaseService.initializeDefaultProducts();
+  }
+
+  // Get categories with product counts
+  Future<Map<ProductCategory, int>> getCategoryCounts() async {
+    final allProducts = await getAllProducts();
+    final categoryCounts = <ProductCategory, int>{};
+    
+    for (final category in ProductCategory.values) {
+      categoryCounts[category] = allProducts
+          .where((product) => product.category == category)
+          .length;
+    }
+    
+    return categoryCounts;
   }
 }
 
-// Result classes
+// Product result class
 class ProductResult {
   final bool success;
   final String? message;
   final Product? product;
 
-  ProductResult._(this.success, this.message, this.product);
+  ProductResult._({required this.success, this.message, this.product});
 
   factory ProductResult.success(Product product) {
-    return ProductResult._(true, null, product);
+    return ProductResult._(success: true, product: product);
   }
 
   factory ProductResult.failure(String message) {
-    return ProductResult._(false, message, null);
+    return ProductResult._(success: false, message: message);
   }
 }
 
-class ValidationResult {
-  final bool success;
-  final String? message;
-
-  ValidationResult._(this.success, this.message);
-
-  factory ValidationResult.success() {
-    return ValidationResult._(true, null);
-  }
-
-  factory ValidationResult.failure(String message) {
-    return ValidationResult._(false, message);
-  }
-}
-
-// Product statistics class
-class ProductStats {
+// Products summary class
+class ProductsSummary {
   final int totalProducts;
-  final int inStockProducts;
+  final int activeProducts;
+  final int inactiveProducts;
   final int lowStockProducts;
+  final int criticalStockProducts;
   final int outOfStockProducts;
   final double totalStockValue;
-  final Map<ProductCategory, int> categoryCount;
-  final Map<ProductCategory, double> categoryValue;
+  final int totalStockQuantity;
 
-  ProductStats({
+  ProductsSummary({
     required this.totalProducts,
-    required this.inStockProducts,
+    required this.activeProducts,
+    required this.inactiveProducts,
     required this.lowStockProducts,
+    required this.criticalStockProducts,
     required this.outOfStockProducts,
     required this.totalStockValue,
-    required this.categoryCount,
-    required this.categoryValue,
+    required this.totalStockQuantity,
+  });
+}
+
+// Stock status enum
+enum StockStatus {
+  inStock,
+  lowStock,
+  criticalStock,
+  outOfStock,
+}
+
+// Bulk update result class
+class BulkUpdateResult {
+  final Map<String, ProductResult> results;
+  final int successCount;
+  final int failureCount;
+  final int totalCount;
+
+  BulkUpdateResult({
+    required this.results,
+    required this.successCount,
+    required this.failureCount,
+    required this.totalCount,
   });
 
-  double get stockPercentage => totalProducts > 0 ? (inStockProducts / totalProducts) * 100 : 0.0;
-  double get lowStockPercentage => totalProducts > 0 ? (lowStockProducts / totalProducts) * 100 : 0.0;
-  double get outOfStockPercentage => totalProducts > 0 ? (outOfStockProducts / totalProducts) * 100 : 0.0;
+  bool get hasFailures => failureCount > 0;
+  bool get allSuccessful => failureCount == 0;
+  double get successRate => totalCount > 0 ? successCount / totalCount : 0.0;
 }

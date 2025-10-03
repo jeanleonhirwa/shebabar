@@ -1,471 +1,443 @@
-import '../models/product.dart';
 import '../models/stock_movement.dart';
-import '../models/daily_summary.dart';
-import '../utils/helpers.dart';
-import 'database_service.dart';
-import 'auth_service.dart';
+import '../models/product.dart';
+import 'firebase_service.dart';
+import 'product_service.dart';
 
 class StockService {
   static final StockService _instance = StockService._internal();
   factory StockService() => _instance;
   StockService._internal();
 
-  final DatabaseService _databaseService = DatabaseService();
-  final AuthService _authService = AuthService();
+  final FirebaseService _firebaseService = FirebaseService();
+  final ProductService _productService = ProductService();
 
   // Record incoming stock
   Future<StockResult> recordIncoming({
-    required int productId,
+    required String productId,
     required int quantity,
+    required double unitPrice,
     String? notes,
+    required String userId,
   }) async {
     try {
-      final currentUser = _authService.currentUser;
-      if (currentUser == null) {
-        return StockResult.failure('Ntujyewe muri sisitemu');
-      }
-
-      // Validate quantity
+      // Validate input
       if (quantity <= 0) {
-        return StockResult.failure('Ingano igomba kuba irenze 0');
+        return StockResult.failure('Umubare ugomba kuba urenze 0');
       }
 
-      // Get product
-      final product = await _databaseService.getProductById(productId);
+      if (unitPrice < 0) {
+        return StockResult.failure('Igiciro ntikishobora kuba munsi ya 0');
+      }
+
+      // Get product to verify it exists
+      final product = await _productService.getProductById(productId);
       if (product == null) {
-        return StockResult.failure('Icyicuruzwa ntikiboneka');
+        return StockResult.failure('Igicuruzwa ntikiboneka');
       }
 
       // Create stock movement
-      final now = DateTime.now();
       final movement = StockMovement(
         productId: productId,
         movementType: MovementType.BYINJIYE,
         quantity: quantity,
-        unitPrice: product.unitPrice,
-        totalAmount: quantity * product.unitPrice,
+        unitPrice: unitPrice,
+        totalAmount: quantity * unitPrice,
         notes: notes,
-        userId: currentUser.userId!,
-        movementDate: now,
-        movementTime: now,
+        userId: userId,
+        movementDate: DateTime.now(),
+        movementTime: DateTime.now(),
+        createdAt: DateTime.now(),
       );
 
-      // Record movement (this will also update product stock)
-      final movementId = await _databaseService.insertStockMovement(movement);
-      final recordedMovement = movement.copyWith(movementId: movementId);
+      // Add stock movement (this will also update product stock)
+      final movementId = await _firebaseService.addStockMovement(movement);
+      final createdMovement = movement.copyWith(movementId: movementId);
 
-      // Update daily summary
-      await _updateDailySummary(now);
-
-      return StockResult.success(recordedMovement);
+      return StockResult.success(createdMovement);
     } catch (e) {
-      return StockResult.failure('Habayeho ikosa: ${e.toString()}');
+      return StockResult.failure('Ntibyashobotse kwandika stock yinjiye: ${e.toString()}');
     }
   }
 
-  // Record sold stock
+  // Record sale
   Future<StockResult> recordSale({
-    required int productId,
+    required String productId,
     required int quantity,
+    required double unitPrice,
     String? notes,
+    required String userId,
   }) async {
     try {
-      final currentUser = _authService.currentUser;
-      if (currentUser == null) {
-        return StockResult.failure('Ntujyewe muri sisitemu');
-      }
-
-      // Validate quantity
+      // Validate input
       if (quantity <= 0) {
-        return StockResult.failure('Ingano igomba kuba irenze 0');
+        return StockResult.failure('Umubare ugomba kuba urenze 0');
       }
 
-      // Get product
-      final product = await _databaseService.getProductById(productId);
+      if (unitPrice < 0) {
+        return StockResult.failure('Igiciro ntikishobora kuba munsi ya 0');
+      }
+
+      // Get product to check stock availability
+      final product = await _productService.getProductById(productId);
       if (product == null) {
-        return StockResult.failure('Icyicuruzwa ntikiboneka');
+        return StockResult.failure('Igicuruzwa ntikiboneka');
       }
 
-      // Check if enough stock available
+      // Check if enough stock is available
       if (product.currentStock < quantity) {
-        return StockResult.failure(
-          'Stock ntihagije. Biri muri stock: ${product.currentStock}'
-        );
+        return StockResult.failure('Stock ntihagije. Usanzwe ufite: ${product.currentStock}');
       }
 
       // Create stock movement
-      final now = DateTime.now();
       final movement = StockMovement(
         productId: productId,
         movementType: MovementType.BYAGURISHIJWE,
         quantity: quantity,
-        unitPrice: product.unitPrice,
-        totalAmount: quantity * product.unitPrice,
+        unitPrice: unitPrice,
+        totalAmount: quantity * unitPrice,
         notes: notes,
-        userId: currentUser.userId!,
-        movementDate: now,
-        movementTime: now,
+        userId: userId,
+        movementDate: DateTime.now(),
+        movementTime: DateTime.now(),
+        createdAt: DateTime.now(),
       );
 
-      // Record movement (this will also update product stock)
-      final movementId = await _databaseService.insertStockMovement(movement);
-      final recordedMovement = movement.copyWith(movementId: movementId);
+      // Add stock movement (this will also update product stock)
+      final movementId = await _firebaseService.addStockMovement(movement);
+      final createdMovement = movement.copyWith(movementId: movementId);
 
-      // Update daily summary
-      await _updateDailySummary(now);
-
-      return StockResult.success(recordedMovement);
+      return StockResult.success(createdMovement);
     } catch (e) {
-      return StockResult.failure('Habayeho ikosa: ${e.toString()}');
+      return StockResult.failure('Ntibyashobotse kwandika igurisha: ${e.toString()}');
     }
   }
 
-  // Record damaged stock
+  // Record damaged/spoiled stock
   Future<StockResult> recordDamaged({
-    required int productId,
+    required String productId,
     required int quantity,
+    required double unitPrice,
     String? notes,
+    required String userId,
   }) async {
     try {
-      final currentUser = _authService.currentUser;
-      if (currentUser == null) {
-        return StockResult.failure('Ntujyewe muri sisitemu');
-      }
-
-      // Validate quantity
+      // Validate input
       if (quantity <= 0) {
-        return StockResult.failure('Ingano igomba kuba irenze 0');
+        return StockResult.failure('Umubare ugomba kuba urenze 0');
       }
 
-      // Get product
-      final product = await _databaseService.getProductById(productId);
+      if (unitPrice < 0) {
+        return StockResult.failure('Igiciro ntikishobora kuba munsi ya 0');
+      }
+
+      // Get product to check stock availability
+      final product = await _productService.getProductById(productId);
       if (product == null) {
-        return StockResult.failure('Icyicuruzwa ntikiboneka');
+        return StockResult.failure('Igicuruzwa ntikiboneka');
       }
 
-      // Check if enough stock available
+      // Check if enough stock is available
       if (product.currentStock < quantity) {
-        return StockResult.failure(
-          'Stock ntihagije. Biri muri stock: ${product.currentStock}'
-        );
+        return StockResult.failure('Stock ntihagije. Usanzwe ufite: ${product.currentStock}');
       }
 
       // Create stock movement
-      final now = DateTime.now();
       final movement = StockMovement(
         productId: productId,
         movementType: MovementType.BYONGEWE,
         quantity: quantity,
-        unitPrice: product.unitPrice,
-        totalAmount: quantity * product.unitPrice,
+        unitPrice: unitPrice,
+        totalAmount: quantity * unitPrice,
         notes: notes,
-        userId: currentUser.userId!,
-        movementDate: now,
-        movementTime: now,
+        userId: userId,
+        movementDate: DateTime.now(),
+        movementTime: DateTime.now(),
+        createdAt: DateTime.now(),
       );
 
-      // Record movement (this will also update product stock)
-      final movementId = await _databaseService.insertStockMovement(movement);
-      final recordedMovement = movement.copyWith(movementId: movementId);
+      // Add stock movement (this will also update product stock)
+      final movementId = await _firebaseService.addStockMovement(movement);
+      final createdMovement = movement.copyWith(movementId: movementId);
 
-      // Update daily summary
-      await _updateDailySummary(now);
-
-      return StockResult.success(recordedMovement);
+      return StockResult.success(createdMovement);
     } catch (e) {
-      return StockResult.failure('Habayeho ikosa: ${e.toString()}');
+      return StockResult.failure('Ntibyashobotse kwandika ibicuruzwa byongewe: ${e.toString()}');
     }
   }
 
   // Get today's stock movements
   Future<List<StockMovement>> getTodayMovements() async {
-    return await _databaseService.getTodayStockMovements();
+    return await _firebaseService.getTodayStockMovements();
   }
 
-  // Get stock movements by type for today
-  Future<List<StockMovement>> getTodayMovementsByType(MovementType type) async {
-    final today = DateTime.now();
-    final startOfDay = DateTime(today.year, today.month, today.day);
-    final endOfDay = startOfDay.add(const Duration(days: 1));
-    
-    return await _databaseService.getStockMovements(
-      startDate: startOfDay,
-      endDate: endOfDay,
-      movementType: type,
-    );
-  }
-
-  // Get stock movements for a date range
+  // Get stock movements with filters
   Future<List<StockMovement>> getMovements({
     DateTime? startDate,
     DateTime? endDate,
-    int? productId,
+    String? productId,
     MovementType? movementType,
+    int limit = 100,
   }) async {
-    return await _databaseService.getStockMovements(
+    return await _firebaseService.getStockMovements(
       startDate: startDate,
       endDate: endDate,
       productId: productId,
       movementType: movementType,
+      limit: limit,
+    );
+  }
+
+  // Get movements by date range
+  Future<List<StockMovement>> getMovementsByDateRange(DateTime startDate, DateTime endDate) async {
+    return await _firebaseService.getStockMovements(
+      startDate: startDate,
+      endDate: endDate,
     );
   }
 
   // Get dashboard statistics
-  Future<DashboardStats> getDashboardStats() async {
-    final stats = await _databaseService.getDashboardStats();
-    
-    return DashboardStats(
-      itemsInStock: stats['itemsInStock'] as int,
-      stockValue: (stats['stockValue'] as num).toDouble(),
-      todaySalesCount: stats['todaySalesCount'] as int,
-      todaySalesAmount: (stats['todaySalesAmount'] as num).toDouble(),
-      todayDamagedCount: stats['todayDamagedCount'] as int,
-      todayIncomingCount: stats['todayIncomingCount'] as int? ?? 0,
-      todayDamageAmount: (stats['todayDamageAmount'] as num?)?.toDouble() ?? 0.0,
-      todayProfit: (stats['todayProfit'] as num?)?.toDouble() ?? 0.0,
-      lowStockProducts: stats['lowStockProducts'] as List<Product>,
-    );
+  Future<Map<String, dynamic>> getDashboardStats() async {
+    return await _firebaseService.getDashboardStats();
   }
 
-  // Update daily summary
-  Future<void> _updateDailySummary(DateTime date) async {
-    final summaryDate = DateTime(date.year, date.month, date.day);
-    final startOfDay = summaryDate;
-    final endOfDay = summaryDate.add(const Duration(days: 1));
+  // Get stock movements summary for a period
+  Future<StockSummary> getStockSummary({
+    DateTime? startDate,
+    DateTime? endDate,
+  }) async {
+    try {
+      final movements = await getMovements(
+        startDate: startDate,
+        endDate: endDate,
+        limit: 1000,
+      );
 
-    // Get today's movements
-    final movements = await _databaseService.getStockMovements(
-      startDate: startOfDay,
-      endDate: endOfDay,
-    );
+      int totalIncoming = 0;
+      int totalSales = 0;
+      int totalDamaged = 0;
+      double totalIncomingValue = 0;
+      double totalSalesValue = 0;
+      double totalDamagedValue = 0;
 
-    // Calculate totals
-    int totalSalesQuantity = 0;
-    double totalSalesAmount = 0.0;
-    int totalIncomingQuantity = 0;
-    int totalDamagedQuantity = 0;
-    double totalDamagedAmount = 0.0;
-
-    for (final movement in movements) {
-      switch (movement.movementType) {
-        case MovementType.BYAGURISHIJWE:
-          totalSalesQuantity += movement.quantity;
-          totalSalesAmount += movement.totalAmount;
-          break;
-        case MovementType.BYINJIYE:
-          totalIncomingQuantity += movement.quantity;
-          break;
-        case MovementType.BYONGEWE:
-          totalDamagedQuantity += movement.quantity;
-          totalDamagedAmount += movement.totalAmount;
-          break;
+      for (final movement in movements) {
+        switch (movement.movementType) {
+          case MovementType.BYINJIYE:
+            totalIncoming += movement.quantity;
+            totalIncomingValue += movement.totalAmount;
+            break;
+          case MovementType.BYAGURISHIJWE:
+            totalSales += movement.quantity;
+            totalSalesValue += movement.totalAmount;
+            break;
+          case MovementType.BYONGEWE:
+            totalDamaged += movement.quantity;
+            totalDamagedValue += movement.totalAmount;
+            break;
+        }
       }
+
+      return StockSummary(
+        totalIncoming: totalIncoming,
+        totalSales: totalSales,
+        totalDamaged: totalDamaged,
+        totalIncomingValue: totalIncomingValue,
+        totalSalesValue: totalSalesValue,
+        totalDamagedValue: totalDamagedValue,
+        totalMovements: movements.length,
+        netQuantity: totalIncoming - totalSales - totalDamaged,
+        netValue: totalIncomingValue - totalSalesValue - totalDamagedValue,
+      );
+    } catch (e) {
+      return StockSummary(
+        totalIncoming: 0,
+        totalSales: 0,
+        totalDamaged: 0,
+        totalIncomingValue: 0,
+        totalSalesValue: 0,
+        totalDamagedValue: 0,
+        totalMovements: 0,
+        netQuantity: 0,
+        netValue: 0,
+      );
     }
-
-    // Calculate closing stock value
-    final products = await _databaseService.getAllProducts();
-    double closingStockValue = 0.0;
-    for (final product in products) {
-      closingStockValue += product.totalValue;
-    }
-
-    // Create or update daily summary
-    final summary = DailySummary(
-      summaryDate: summaryDate,
-      totalSalesQuantity: totalSalesQuantity,
-      totalSalesAmount: totalSalesAmount,
-      totalIncomingQuantity: totalIncomingQuantity,
-      totalDamagedQuantity: totalDamagedQuantity,
-      totalDamagedAmount: totalDamagedAmount,
-      closingStockValue: closingStockValue,
-      updatedAt: DateTime.now(),
-    );
-
-    // This would need to be implemented in DatabaseService
-    // await _databaseService.insertOrUpdateDailySummary(summary);
   }
 
-  // Get low stock products
-  Future<List<Product>> getLowStockProducts() async {
-    final products = await _databaseService.getAllProducts();
-    return products.where((product) => product.isLowStock).toList();
-  }
-
-  // Get out of stock products
-  Future<List<Product>> getOutOfStockProducts() async {
-    final products = await _databaseService.getAllProducts();
-    return products.where((product) => product.isOutOfStock).toList();
-  }
-
-  // Calculate stock value by category
-  Future<Map<ProductCategory, double>> getStockValueByCategory() async {
-    final products = await _databaseService.getAllProducts();
-    final Map<ProductCategory, double> categoryValues = {};
-
-    for (final product in products) {
-      categoryValues[product.category] = 
-          (categoryValues[product.category] ?? 0.0) + product.totalValue;
-    }
-
-    return categoryValues;
-  }
-
-  // Get best selling products
-  Future<List<ProductSalesStats>> getBestSellingProducts({
+  // Get top selling products
+  Future<List<ProductSalesData>> getTopSellingProducts({
     DateTime? startDate,
     DateTime? endDate,
     int limit = 10,
   }) async {
-    final movements = await _databaseService.getStockMovements(
-      startDate: startDate,
-      endDate: endDate,
-      movementType: MovementType.BYAGURISHIJWE,
-    );
+    try {
+      final salesMovements = await getMovements(
+        startDate: startDate,
+        endDate: endDate,
+        movementType: MovementType.BYAGURISHIJWE,
+        limit: 1000,
+      );
 
-    final Map<int, ProductSalesStats> salesMap = {};
+      final productSales = <String, ProductSalesData>{};
 
-    for (final movement in movements) {
-      if (salesMap.containsKey(movement.productId)) {
-        final existing = salesMap[movement.productId]!;
-        salesMap[movement.productId] = ProductSalesStats(
-          productId: existing.productId,
-          productName: existing.productName,
-          quantitySold: existing.quantitySold + movement.quantity,
-          totalAmount: existing.totalAmount + movement.totalAmount,
-        );
-      } else {
-        final product = await _databaseService.getProductById(movement.productId);
-        if (product != null) {
-          salesMap[movement.productId] = ProductSalesStats(
-            productId: movement.productId,
-            productName: product.productName,
-            quantitySold: movement.quantity,
-            totalAmount: movement.totalAmount,
+      for (final movement in salesMovements) {
+        final productId = movement.productId;
+        
+        if (productSales.containsKey(productId)) {
+          final existing = productSales[productId]!;
+          productSales[productId] = ProductSalesData(
+            productId: productId,
+            productName: existing.productName,
+            totalQuantity: existing.totalQuantity + movement.quantity,
+            totalValue: existing.totalValue + movement.totalAmount,
+            salesCount: existing.salesCount + 1,
+          );
+        } else {
+          final product = await _productService.getProductById(productId);
+          productSales[productId] = ProductSalesData(
+            productId: productId,
+            productName: product?.productName ?? 'Unknown Product',
+            totalQuantity: movement.quantity,
+            totalValue: movement.totalAmount,
+            salesCount: 1,
           );
         }
       }
+
+      final sortedProducts = productSales.values.toList()
+        ..sort((a, b) => b.totalValue.compareTo(a.totalValue));
+
+      return sortedProducts.take(limit).toList();
+    } catch (e) {
+      return [];
     }
-
-    final salesList = salesMap.values.toList();
-    salesList.sort((a, b) => b.quantitySold.compareTo(a.quantitySold));
-
-    return salesList.take(limit).toList();
   }
 
-  // Validate stock movement
-  Future<ValidationResult> validateStockMovement({
-    required int productId,
-    required MovementType movementType,
-    required int quantity,
-  }) async {
-    try {
-      // Check if product exists
-      final product = await _databaseService.getProductById(productId);
-      if (product == null) {
-        return ValidationResult.failure('Icyicuruzwa ntikiboneka');
-      }
+  // Get stock movements by product
+  Future<List<StockMovement>> getMovementsByProduct(String productId, {int limit = 50}) async {
+    return await getMovements(
+      productId: productId,
+      limit: limit,
+    );
+  }
 
-      // Check if product is active
-      if (!product.isActive) {
-        return ValidationResult.failure('Iki cyicuruzwa ntikiri gikora');
-      }
+  // Get low stock alerts
+  Future<List<Product>> getLowStockAlerts() async {
+    return await _productService.getLowStockProducts();
+  }
 
-      // Validate quantity
-      if (quantity <= 0) {
-        return ValidationResult.failure('Ingano igomba kuba irenze 0');
-      }
+  // Get critical stock alerts
+  Future<List<Product>> getCriticalStockAlerts() async {
+    return await _productService.getCriticalStockProducts();
+  }
 
-      if (quantity > 10000) {
-        return ValidationResult.failure('Ingano ntishobora kurenza 10,000');
-      }
+  // Get out of stock alerts
+  Future<List<Product>> getOutOfStockAlerts() async {
+    return await _productService.getOutOfStockProducts();
+  }
 
-      // For sales and damaged items, check available stock
-      if (movementType == MovementType.BYAGURISHIJWE || 
-          movementType == MovementType.BYONGEWE) {
-        if (product.currentStock < quantity) {
-          return ValidationResult.failure(
-            'Stock ntihagije. Biri muri stock: ${product.currentStock}'
-          );
-        }
-      }
+  // Bulk record movements
+  Future<BulkStockResult> bulkRecordMovements(List<StockMovement> movements) async {
+    final results = <StockResult>[];
+    int successCount = 0;
+    int failureCount = 0;
 
-      return ValidationResult.success();
-    } catch (e) {
-      return ValidationResult.failure('Habayeho ikosa: ${e.toString()}');
+    for (final movement in movements) {
+      try {
+        final movementId = await _firebaseService.addStockMovement(movement);
+        final createdMovement = movement.copyWith(movementId: movementId);
+        results.add(StockResult.success(createdMovement));
+        successCount++;
+      } catch (e) {
+        results.add(StockResult.failure('Failed to record movement: ${e.toString()}'));
+        failureCount++;
+      }
     }
+
+    return BulkStockResult(
+      results: results,
+      successCount: successCount,
+      failureCount: failureCount,
+      totalCount: movements.length,
+    );
   }
 }
 
-// Result classes
+// Stock result class
 class StockResult {
   final bool success;
   final String? message;
   final StockMovement? movement;
 
-  StockResult._(this.success, this.message, this.movement);
+  StockResult._({required this.success, this.message, this.movement});
 
   factory StockResult.success(StockMovement movement) {
-    return StockResult._(true, null, movement);
+    return StockResult._(success: true, movement: movement);
   }
 
   factory StockResult.failure(String message) {
-    return StockResult._(false, message, null);
+    return StockResult._(success: false, message: message);
   }
 }
 
-class ValidationResult {
-  final bool success;
-  final String? message;
+// Stock summary class
+class StockSummary {
+  final int totalIncoming;
+  final int totalSales;
+  final int totalDamaged;
+  final double totalIncomingValue;
+  final double totalSalesValue;
+  final double totalDamagedValue;
+  final int totalMovements;
+  final int netQuantity;
+  final double netValue;
 
-  ValidationResult._(this.success, this.message);
-
-  factory ValidationResult.success() {
-    return ValidationResult._(true, null);
-  }
-
-  factory ValidationResult.failure(String message) {
-    return ValidationResult._(false, message);
-  }
-}
-
-// Dashboard statistics class
-class DashboardStats {
-  final int itemsInStock;
-  final double stockValue;
-  final int todaySalesCount;
-  final double todaySalesAmount;
-  final int todayDamagedCount;
-  final int todayIncomingCount;
-  final double todayDamageAmount;
-  final double todayProfit;
-  final List<Product> lowStockProducts;
-
-  DashboardStats({
-    required this.itemsInStock,
-    required this.stockValue,
-    required this.todaySalesCount,
-    required this.todaySalesAmount,
-    required this.todayDamagedCount,
-    required this.todayIncomingCount,
-    required this.todayDamageAmount,
-    required this.todayProfit,
-    required this.lowStockProducts,
+  StockSummary({
+    required this.totalIncoming,
+    required this.totalSales,
+    required this.totalDamaged,
+    required this.totalIncomingValue,
+    required this.totalSalesValue,
+    required this.totalDamagedValue,
+    required this.totalMovements,
+    required this.netQuantity,
+    required this.netValue,
   });
 }
 
-// Product sales statistics
-class ProductSalesStats {
-  final int productId;
+// Product sales data class
+class ProductSalesData {
+  final String productId;
   final String productName;
-  final int quantitySold;
-  final double totalAmount;
+  final int totalQuantity;
+  final double totalValue;
+  final int salesCount;
 
-  ProductSalesStats({
+  ProductSalesData({
     required this.productId,
     required this.productName,
-    required this.quantitySold,
-    required this.totalAmount,
+    required this.totalQuantity,
+    required this.totalValue,
+    required this.salesCount,
   });
 
-  double get averagePrice => quantitySold > 0 ? totalAmount / quantitySold : 0.0;
+  double get averagePrice => salesCount > 0 ? totalValue / totalQuantity : 0.0;
+  double get averageQuantityPerSale => salesCount > 0 ? totalQuantity / salesCount : 0.0;
+}
+
+// Bulk stock result class
+class BulkStockResult {
+  final List<StockResult> results;
+  final int successCount;
+  final int failureCount;
+  final int totalCount;
+
+  BulkStockResult({
+    required this.results,
+    required this.successCount,
+    required this.failureCount,
+    required this.totalCount,
+  });
+
+  bool get hasFailures => failureCount > 0;
+  bool get allSuccessful => failureCount == 0;
+  double get successRate => totalCount > 0 ? successCount / totalCount : 0.0;
 }

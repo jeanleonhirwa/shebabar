@@ -1,16 +1,15 @@
 class StockMovement {
-  final int? movementId;
-  final int productId;
+  final String? movementId;
+  final String productId;
   final MovementType movementType;
   final int quantity;
   final double unitPrice;
   final double totalAmount;
   final String? notes;
-  final int userId;
+  final String userId;
   final DateTime movementDate;
   final DateTime movementTime;
   final DateTime? createdAt;
-  final int syncStatus;
 
   StockMovement({
     this.movementId,

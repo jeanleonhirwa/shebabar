@@ -1,5 +1,5 @@
 class User {
-  final int? userId;
+  final String? userId;
   final String username;
   final String passwordHash;
   final String fullName;
@@ -7,7 +7,6 @@ class User {
   final bool isActive;
   final DateTime? createdAt;
   final DateTime? lastLogin;
-  final int syncStatus;
 
   User({
     this.userId,
@@ -18,7 +17,6 @@ class User {
     this.isActive = true,
     this.createdAt,
     this.lastLogin,
-    this.syncStatus = 0,
   });
 
   factory User.fromMap(Map<String, dynamic> map) {
@@ -37,7 +35,6 @@ class User {
       lastLogin: map['last_login'] != null 
           ? DateTime.parse(map['last_login']) 
           : null,
-      syncStatus: map['sync_status'] ?? 0,
     );
   }
 
@@ -51,12 +48,11 @@ class User {
       'is_active': isActive ? 1 : 0,
       'created_at': createdAt?.toIso8601String(),
       'last_login': lastLogin?.toIso8601String(),
-      'sync_status': syncStatus,
     };
   }
 
   User copyWith({
-    int? userId,
+    String? userId,
     String? username,
     String? passwordHash,
     String? fullName,
@@ -64,7 +60,6 @@ class User {
     bool? isActive,
     DateTime? createdAt,
     DateTime? lastLogin,
-    int? syncStatus,
   }) {
     return User(
       userId: userId ?? this.userId,
@@ -75,7 +70,6 @@ class User {
       isActive: isActive ?? this.isActive,
       createdAt: createdAt ?? this.createdAt,
       lastLogin: lastLogin ?? this.lastLogin,
-      syncStatus: syncStatus ?? this.syncStatus,
     );
   }
 

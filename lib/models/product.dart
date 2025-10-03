@@ -1,5 +1,5 @@
 class Product {
-  final int? productId;
+  final String? productId;
   final String productName;
   final ProductCategory category;
   final double unitPrice;
@@ -8,7 +8,6 @@ class Product {
   final bool isActive;
   final DateTime? createdAt;
   final DateTime? updatedAt;
-  final int syncStatus;
 
   Product({
     this.productId,
@@ -20,7 +19,6 @@ class Product {
     this.isActive = true,
     this.createdAt,
     this.updatedAt,
-    this.syncStatus = 0,
   });
 
   factory Product.fromMap(Map<String, dynamic> map) {
@@ -40,7 +38,6 @@ class Product {
       updatedAt: map['updated_at'] != null 
           ? DateTime.parse(map['updated_at']) 
           : null,
-      syncStatus: map['sync_status'] ?? 0,
     );
   }
 
@@ -55,12 +52,11 @@ class Product {
       'is_active': isActive ? 1 : 0,
       'created_at': createdAt?.toIso8601String(),
       'updated_at': updatedAt?.toIso8601String(),
-      'sync_status': syncStatus,
     };
   }
 
   Product copyWith({
-    int? productId,
+    String? productId,
     String? productName,
     ProductCategory? category,
     double? unitPrice,
@@ -69,7 +65,6 @@ class Product {
     bool? isActive,
     DateTime? createdAt,
     DateTime? updatedAt,
-    int? syncStatus,
   }) {
     return Product(
       productId: productId ?? this.productId,
@@ -81,7 +76,6 @@ class Product {
       isActive: isActive ?? this.isActive,
       createdAt: createdAt ?? this.createdAt,
       updatedAt: updatedAt ?? this.updatedAt,
-      syncStatus: syncStatus ?? this.syncStatus,
     );
   }
 

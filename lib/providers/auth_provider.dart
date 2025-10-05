@@ -1,5 +1,6 @@
 import 'package:flutter/foundation.dart';
 import '../models/user.dart';
+import '../models/permission.dart';
 import '../services/auth_service.dart';
 
 class AuthProvider extends ChangeNotifier {
@@ -140,7 +141,10 @@ class AuthProvider extends ChangeNotifier {
     _clearError();
     
     try {
-      final result = await _authService.updateUser(user);
+      final result = await _authService.updateProfile(
+        fullName: user.fullName,
+        role: user.role,
+      );
       
       if (result.success) {
         // Update current user if it's the same user
@@ -178,19 +182,31 @@ class AuthProvider extends ChangeNotifier {
 
   // Check permissions
   bool hasPermission(Permission permission) {
-    return _authService.hasPermission(permission);
+    if (_currentUser == null) return false;
+    
+    // Owner has all permissions
+    if (_currentUser!.role == UserRole.owner) return true;
+    
+    // Employee has limited permissions
+    if (_currentUser!.role == UserRole.employee) {
+      return permission == Permission.recordStock || 
+             permission == Permission.viewDashboard;
+    }
+    
+    return false;
   }
 
   // Check auto-login
   Future<bool> checkAutoLogin() async {
     _setLoading(true);
     try {
-      final hasAutoLogin = await _authService.checkAutoLogin();
-      if (hasAutoLogin) {
+      await _authService.initialize();
+      if (_authService.currentUser != null) {
         _currentUser = _authService.currentUser;
         notifyListeners();
+        return true;
       }
-      return hasAutoLogin;
+      return false;
     } catch (e) {
       _setError('Habayeho ikosa: ${e.toString()}');
       return false;

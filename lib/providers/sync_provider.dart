@@ -1,10 +1,11 @@
 import 'dart:async';
 import 'package:flutter/foundation.dart';
 import 'package:flutter/material.dart';
-import '../services/database_service.dart';
+import 'package:connectivity_plus/connectivity_plus.dart';
+import '../services/firebase_service.dart';
 
 class SyncProvider extends ChangeNotifier {
-  final DatabaseService _databaseService = DatabaseService();
+  final FirebaseService _firebaseService = FirebaseService();
   
   // Private state variables
   bool _isOnline = false;
@@ -24,20 +25,6 @@ class SyncProvider extends ChangeNotifier {
   String? get lastSyncTime => _lastSyncTime;
   String? get errorMessage => _errorMessage;
   String? get successMessage => _successMessage;
-  bool get needsSync => _pendingCount > 0;
-  
-  // Sync status text for UI
-  String get syncStatusText {
-    if (_isSyncing) {
-      return 'Birasync...';
-    } else if (!_isOnline) {
-      return 'Ntiwunganiye kuri Internet';
-    } else if (_pendingCount > 0) {
-      return '$_pendingCount ibikeneye sync';
-    } else {
-      return 'Byose birasync neza';
-    }
-  }
 
   // Initialize sync provider
   Future<void> initialize() async {
@@ -54,68 +41,79 @@ class SyncProvider extends ChangeNotifier {
     super.dispose();
   }
 
-  // Manual sync trigger
-  Future<bool> performSync() async {
-    if (_isSyncing) {
-      return false; // Already syncing
-    }
-
-    _setSyncing(true);
-    _clearMessages();
-
+  // Perform full sync (Firebase handles sync automatically)
+  Future<bool> performFullSync() async {
+    if (_isSyncing) return false;
+    
+    _isSyncing = true;
+    _errorMessage = null;
+    _successMessage = null;
+    notifyListeners();
+    
     try {
-      final success = await _databaseService.performFullSync();
+      // Check connectivity
+      final connectivityResult = await Connectivity().checkConnectivity();
+      _isOnline = connectivityResult != ConnectivityResult.none;
       
-      if (success) {
-        _setSuccessMessage('Sync yarangiye neza!');
-        await _updateSyncStatus();
-        return true;
+      if (_isOnline) {
+        _successMessage = 'Connected to Firebase - data syncs automatically';
+        _lastSyncTime = DateTime.now().toIso8601String();
+        _pendingCount = 0;
       } else {
-        _setErrorMessage('Sync ntiyarangiye. Gerageza nanone.');
-        return false;
+        _errorMessage = 'No internet connection';
       }
+      
+      notifyListeners();
+      return _isOnline;
     } catch (e) {
-      _setErrorMessage('Habayeho ikosa mu sync: ${e.toString()}');
+      _errorMessage = 'Sync error: ${e.toString()}';
       return false;
     } finally {
-      _setSyncing(false);
+      _isSyncing = false;
+      notifyListeners();
     }
   }
 
-  // Force sync (even if offline - will queue for later)
+  // Force sync (check connectivity)
   Future<void> forceSync() async {
+    if (_isSyncing) return;
+    
+    _isSyncing = true;
     await _updateSyncStatus();
+    
     if (_isOnline) {
-      await performSync();
+      await performFullSync();
     } else {
       _setErrorMessage('Ntiwunganiye kuri Internet. Sync izakorwa nyuma.');
     }
+    
+    _isSyncing = false;
+    notifyListeners();
   }
 
   // Start automatic periodic sync (every 5 minutes when online)
   void _startPeriodicSync() {
-    _syncTimer = Timer.periodic(const Duration(minutes: 5), (timer) async {
+    _syncTimer = Timer.periodic(const Duration(minutes: 5), (timer) {
       if (_isOnline && !_isSyncing && _pendingCount > 0) {
-        await performSync();
+        performFullSync();
       }
     });
   }
 
-  // Start periodic status updates (every 30 seconds)
+  // Start status updates (every 30 seconds)
   void _startStatusUpdates() {
-    _statusTimer = Timer.periodic(const Duration(seconds: 30), (timer) async {
-      await _updateSyncStatus();
+    _statusTimer = Timer.periodic(const Duration(seconds: 30), (timer) {
+      _updateSyncStatus();
     });
   }
 
-  // Update sync status from database
+  // Update sync status
   Future<void> _updateSyncStatus() async {
     try {
-      final status = await _databaseService.getSyncStatus();
-      
-      _isOnline = status['isOnline'] as bool;
-      _pendingCount = status['pendingCount'] as int;
-      _lastSyncTime = status['lastSyncTime'] as String?;
+      final connectivityResult = await Connectivity().checkConnectivity();
+      _isOnline = connectivityResult != ConnectivityResult.none;
+      _pendingCount = 0; // Firebase handles sync automatically
+      _lastSyncTime = DateTime.now().toIso8601String();
       
       notifyListeners();
     } catch (e) {
@@ -128,169 +126,125 @@ class SyncProvider extends ChangeNotifier {
   // Get detailed sync information
   Future<Map<String, dynamic>> getDetailedSyncInfo() async {
     try {
-      final pendingData = await _databaseService.getPendingSyncData();
-      final status = await _databaseService.getSyncStatus();
-      
-      // Count pending items by table
-      final pendingCounts = <String, int>{};
-      for (final item in pendingData) {
-        final tableName = item['table_name'] as String;
-        pendingCounts[tableName] = (pendingCounts[tableName] ?? 0) + 1;
-      }
+      final connectivityResult = await Connectivity().checkConnectivity();
+      final isOnline = connectivityResult != ConnectivityResult.none;
       
       return {
-        'status': status,
-        'pendingData': {
-          'users': pendingCounts['users'] ?? 0,
-          'products': pendingCounts['products'] ?? 0,
-          'movements': pendingCounts['stock_movements'] ?? 0,
-          'summaries': pendingCounts['daily_summaries'] ?? 0,
-        },
+        'isOnline': isOnline,
+        'isSyncing': _isSyncing,
+        'pendingCount': 0, // Firebase handles sync automatically
+        'lastSyncTime': _lastSyncTime,
+        'errorMessage': _errorMessage,
+        'successMessage': _successMessage,
+        'syncStatus': isOnline ? 'Connected' : 'Offline',
+        'connectionType': connectivityResult.toString().split('.').last,
       };
     } catch (e) {
       return {
-        'error': e.toString(),
+        'isOnline': false,
+        'isSyncing': false,
+        'pendingCount': 0,
+        'lastSyncTime': null,
+        'errorMessage': 'Failed to get sync info: ${e.toString()}',
+        'successMessage': null,
+        'syncStatus': 'Error',
+        'connectionType': 'none',
       };
     }
   }
 
-  // Retry failed sync items
-  Future<bool> retryFailedSync() async {
-    return await performSync();
-  }
-
-  // Clear sync queue (use with caution)
-  Future<void> clearSyncQueue() async {
-    try {
-      // Mark all items as synced by updating their sync_status to 1
-      final db = await _databaseService.localDatabase;
-      await db.transaction((txn) async {
-        await txn.update('users', {'sync_status': 1}, where: 'sync_status = 0');
-        await txn.update('products', {'sync_status': 1}, where: 'sync_status = 0');
-        await txn.update('stock_movements', {'sync_status': 1}, where: 'sync_status = 0');
-        await txn.update('daily_summaries', {'sync_status': 1}, where: 'sync_status = 0');
-      });
-      
-      await _updateSyncStatus();
-      _setSuccessMessage('Sync queue yarasiwe');
-    } catch (e) {
-      _setErrorMessage('Ntibyashobotse gusiba sync queue: ${e.toString()}');
+  // Get user-friendly status message
+  String getUserFriendlyStatus() {
+    if (_isSyncing) {
+      return 'Gusync...';
     }
-  }
-
-  // Check if specific item needs sync
-  Future<bool> itemNeedsSync(String table, Map<String, dynamic> where) async {
-    try {
-      final db = await _databaseService.localDatabase;
-      final result = await db.query(
-        table,
-        where: '${where.keys.map((key) => '$key = ?').join(' AND ')} AND sync_status = 0',
-        whereArgs: where.values.toList(),
-      );
-      return result.isNotEmpty;
-    } catch (e) {
-      return false;
+    
+    if (!_isOnline) {
+      return 'Ntiwunganiye kuri Internet';
     }
-  }
-
-  // Mark specific item for sync
-  Future<void> markItemForSync(String table, int recordId) async {
-    try {
-      await _databaseService.markForSync(table, recordId);
-      await _updateSyncStatus();
-      _setSuccessMessage('Item yarongewe kuri sync');
-    } catch (e) {
-      _setErrorMessage('Ntibyashobotse kuronga item kuri sync: ${e.toString()}');
+    
+    if (_pendingCount > 0) {
+      return 'Hari amakuru $pendingCount ategereje gusync';
     }
+    
+    return 'Byose birasync neza';
   }
 
-  // Get sync history (last 10 sync attempts)
-  Future<List<Map<String, dynamic>>> getSyncHistory() async {
-    try {
-      final db = await _databaseService.localDatabase;
-      
-      // Create sync_history table if it doesn't exist
-      await db.execute('''
-        CREATE TABLE IF NOT EXISTS sync_history (
-          id INTEGER PRIMARY KEY AUTOINCREMENT,
-          sync_time TEXT NOT NULL,
-          success INTEGER NOT NULL,
-          items_synced INTEGER NOT NULL,
-          error_message TEXT,
-          created_at TEXT NOT NULL
-        )
-      ''');
-      
-      final result = await db.query(
-        'sync_history',
-        orderBy: 'created_at DESC',
-        limit: 10,
-      );
-      
-      return result;
-    } catch (e) {
-      return [];
+  // Get status color
+  Color getStatusColor() {
+    if (_isSyncing) {
+      return Colors.orange;
     }
+    
+    if (!_isOnline) {
+      return Colors.red;
+    }
+    
+    if (_pendingCount > 0) {
+      return Colors.amber;
+    }
+    
+    return Colors.green;
   }
 
+  // Get status icon
+  IconData getStatusIcon() {
+    if (_isSyncing) {
+      return Icons.sync;
+    }
+    
+    if (!_isOnline) {
+      return Icons.cloud_off;
+    }
+    
+    if (_pendingCount > 0) {
+      return Icons.cloud_upload;
+    }
+    
+    return Icons.cloud_done;
+  }
 
-  // Helper methods
+  // Perform sync (alias for performFullSync)
+  Future<bool> performSync() async {
+    return await performFullSync();
+  }
+
+  // Set syncing state
   void _setSyncing(bool syncing) {
     _isSyncing = syncing;
     notifyListeners();
   }
 
+  // Set error message
   void _setErrorMessage(String message) {
     _errorMessage = message;
     _successMessage = null;
     notifyListeners();
   }
 
+  // Set success message
   void _setSuccessMessage(String message) {
     _successMessage = message;
     _errorMessage = null;
     notifyListeners();
   }
 
+  // Clear messages
   void _clearMessages() {
     _errorMessage = null;
     _successMessage = null;
     notifyListeners();
   }
 
-  // Get sync priority (higher number = higher priority)
-  int getSyncPriority() {
-    if (!_isOnline) return 0;
-    if (_isSyncing) return 1;
-    if (_pendingCount > 10) return 5;
-    if (_pendingCount > 5) return 4;
-    if (_pendingCount > 0) return 3;
-    return 2;
-  }
-
-  // Get user-friendly sync status
-  String getUserFriendlyStatus() {
-    if (_isSyncing) {
-      return 'Birasync... Tegereza gato.';
-    } else if (!_isOnline) {
-      return 'Ntiwunganiye kuri Internet. Sync izakorwa nyuma.';
-    } else if (_pendingCount > 0) {
-      return 'Hari $_pendingCount ibikeneye sync. Kanda hano kugirango usync.';
-    } else if (_lastSyncTime != null) {
-      final lastSync = DateTime.tryParse(_lastSyncTime!);
-      if (lastSync != null) {
-        final difference = DateTime.now().difference(lastSync);
-        if (difference.inMinutes < 5) {
-          return 'Sync yarangiye vuba aha (${difference.inMinutes} min)';
-        } else if (difference.inHours < 1) {
-          return 'Sync yarangiye ${difference.inMinutes} min ashize';
-        } else if (difference.inDays < 1) {
-          return 'Sync yarangiye ${difference.inHours} h ashize';
-        } else {
-          return 'Sync yarangiye ${difference.inDays} day(s) ashize';
-        }
-      }
-    }
-    return 'Sync iri ready';
+  // Get sync statistics
+  Map<String, dynamic> getSyncStats() {
+    return {
+      'isOnline': _isOnline,
+      'isSyncing': _isSyncing,
+      'pendingCount': _pendingCount,
+      'lastSyncTime': _lastSyncTime,
+      'hasError': _errorMessage != null,
+      'hasSuccess': _successMessage != null,
+    };
   }
 }

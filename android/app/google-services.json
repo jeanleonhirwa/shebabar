@@ -1,0 +1,29 @@
+{
+  "project_info": {
+    "project_number": "617207012119",
+    "project_id": "sheba-a11d3",
+    "storage_bucket": "sheba-a11d3.firebasestorage.app"
+  },
+  "client": [
+    {
+      "client_info": {
+        "mobilesdk_app_id": "1:617207012119:android:305eaa99b2ccf66200b552",
+        "android_client_info": {
+          "package_name": "sheba.sheba"
+        }
+      },
+      "oauth_client": [],
+      "api_key": [
+        {
+          "current_key": "AIzaSyCack_dPhHintaonT_ykeSpt_IF5oA2O2I"
+        }
+      ],
+      "services": {
+        "appinvite_service": {
+          "other_platform_oauth_client": []
+        }
+      }
+    }
+  ],
+  "configuration_version": "1"
+}
